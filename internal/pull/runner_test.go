@@ -190,7 +190,7 @@ func TestRunnerRunOrchestratesDependencies(t *testing.T) {
 		calls = append(calls, "chart-archive")
 		return filepath.Join(outputDir, "demo-1.0.0.tgz"), nil
 	}
-	h.runner.stagePushBinary = func(outputDir string) (string, error) {
+	h.runner.stagePushBinary = func(_ context.Context, outputDir, _, _ string) (string, error) {
 		calls = append(calls, "copy")
 		if outputDir == "" {
 			t.Fatal("stagePushBinary() got empty outputDir")
@@ -266,7 +266,7 @@ func TestRunnerRunIncludesChartAnnotationImagesBeforeManifestImages(t *testing.T
 	h.runner.writePushManifest = func(outputDir string, specs []pushspec.ArchiveSpec) error {
 		return os.WriteFile(filepath.Join(outputDir, pushspec.PushManifestFileName()), []byte("{\n  \"images\": []\n}\n"), 0o644)
 	}
-	h.runner.stagePushBinary = func(outputDir string) (string, error) {
+	h.runner.stagePushBinary = func(_ context.Context, outputDir, _, _ string) (string, error) {
 		return filepath.Join(outputDir, push.PushBinaryName()), nil
 	}
 
@@ -348,7 +348,7 @@ func TestRunnerRunChecksChartAnnotationsBeforeRendering(t *testing.T) {
 		calls = append(calls, "chart-archive")
 		return filepath.Join(outputDir, "example-0.1.0.tgz"), nil
 	}
-	h.runner.stagePushBinary = func(outputDir string) (string, error) {
+	h.runner.stagePushBinary = func(_ context.Context, outputDir, _, _ string) (string, error) {
 		calls = append(calls, "copy")
 		return filepath.Join(outputDir, push.PushBinaryName()), nil
 	}
@@ -392,7 +392,7 @@ func TestRunnerExecuteReturnsPullResult(t *testing.T) {
 	h.runner.writePushManifest = func(outputDir string, _ []pushspec.ArchiveSpec) error {
 		return os.WriteFile(filepath.Join(outputDir, pushspec.PushManifestFileName()), []byte("{}\n"), 0o644)
 	}
-	h.runner.stagePushBinary = func(outputDir string) (string, error) {
+	h.runner.stagePushBinary = func(_ context.Context, outputDir, _, _ string) (string, error) {
 		return filepath.Join(outputDir, push.PushBinaryName()), nil
 	}
 

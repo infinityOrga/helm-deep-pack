@@ -5,22 +5,13 @@ import (
 	"fmt"
 	"helm-deep-pack/internal/progress"
 	"helm-deep-pack/internal/pushspec"
+	"helm-deep-pack/internal/terminal"
+	"helm-deep-pack/internal/termstyle"
 	"io"
 	"os"
 	"strings"
 
 	"golang.org/x/term"
-)
-
-const (
-	ansiReset   = "\x1b[0m"
-	ansiBold    = "\x1b[1m"
-	ansiDim     = "\x1b[2m"
-	ansiRed     = "\x1b[31m"
-	ansiGreen   = "\x1b[32m"
-	ansiYellow  = "\x1b[33m"
-	ansiMagenta = "\x1b[35m"
-	ansiCyan    = "\x1b[36m"
 )
 
 type selectModel struct {
@@ -112,10 +103,7 @@ func (m *selectModel) render() []string {
 
 	lines = append(lines, "Select images to push (↑/↓ move · space toggle · a all · enter confirm · esc cancel)")
 
-	end := m.top + m.height
-	if end > len(m.items) {
-		end = len(m.items)
-	}
+	end := min(m.top+m.height, len(m.items))
 	for i := m.top; i < end; i++ {
 		prefix := "  "
 		if i == m.cursor {
@@ -214,12 +202,11 @@ func readKey(r *bufio.Reader) (key, error) {
 }
 
 func viewportHeight(out io.Writer, count int) int {
-	if !progress.IsTerminalWriter(out) {
+	if !terminal.IsWriter(out) {
 		return count
 	}
-	f := out.(*os.File)
-	_, height, err := term.GetSize(int(f.Fd()))
-	if err != nil || height < 4 {
+	_, height := terminal.Size(out)
+	if height < 4 {
 		return count
 	}
 	viewport := height - 3
@@ -238,7 +225,7 @@ func fitRenderLines(lines []string, width int) []string {
 	}
 	fitted := make([]string, len(lines))
 	for i, line := range lines {
-		fitted[i] = progress.TruncateForWidth(line, width-1)
+		fitted[i] = terminal.Truncate(line, width-1)
 	}
 	return fitted
 }
@@ -249,12 +236,9 @@ func colorizeRenderLines(lines []string, model *selectModel) []string {
 	}
 
 	styled := append([]string(nil), lines...)
-	styled[0] = ansiBold + ansiCyan + styled[0] + ansiReset
+	styled[0] = termstyle.Bold + termstyle.Cyan + styled[0] + termstyle.Reset
 
-	end := model.top + model.height
-	if end > len(model.items) {
-		end = len(model.items)
-	}
+	end := min(model.top+model.height, len(model.items))
 	for itemIdx := model.top; itemIdx < end; itemIdx++ {
 		lineIdx := 1 + (itemIdx - model.top)
 		if lineIdx >= len(styled)-1 {
@@ -263,52 +247,32 @@ func colorizeRenderLines(lines []string, model *selectModel) []string {
 
 		prefix := statusColor(model.items[itemIdx].Status)
 		if model.checked[itemIdx] {
-			prefix = ansiBold + prefix
+			prefix = termstyle.Bold + prefix
 		}
-		styled[lineIdx] = prefix + styled[lineIdx] + ansiReset
+		styled[lineIdx] = prefix + styled[lineIdx] + termstyle.Reset
 	}
 
-	footerColor := ansiDim
+	footerColor := termstyle.Dim
 	if model.selectedCount() > 0 {
-		footerColor = ansiBold + ansiCyan
+		footerColor = termstyle.Bold + termstyle.Cyan
 	}
-	styled[len(styled)-1] = footerColor + styled[len(styled)-1] + ansiReset
+	styled[len(styled)-1] = footerColor + styled[len(styled)-1] + termstyle.Reset
 	return styled
 }
 
 func statusColor(status imageStatus) string {
 	switch status {
 	case statusPushable:
-		return ansiYellow
+		return termstyle.Yellow
 	case statusMirrored:
-		return ansiGreen
+		return termstyle.Green
 	case statusConflict:
-		return ansiRed
+		return termstyle.Red
 	case statusUnknown:
-		return ansiMagenta
+		return termstyle.Magenta
 	default:
 		return ""
 	}
-}
-
-func writeString(w io.Writer, value string) error {
-	_, err := io.WriteString(w, value)
-	return err
-}
-
-func clearProgressBlockChecked(w io.Writer, lines int) error {
-	if lines <= 0 {
-		return nil
-	}
-	if err := writeString(w, "\r\x1b[2K"); err != nil {
-		return err
-	}
-	for i := 1; i < lines; i++ {
-		if err := writeString(w, "\x1b[1A\r\x1b[2K"); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry string) (selected []pushspec.ArchiveSpec, cancelled bool, err error) {
@@ -323,7 +287,7 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 	var inputFD int
 	hasRawTerminal := false
 	if f, ok := in.(*os.File); ok {
-		if progress.IsTerminalWriter(out) {
+		if terminal.IsWriter(out) {
 			inputFD = int(f.Fd())
 			st, makeRawErr := term.MakeRaw(inputFD)
 			if makeRawErr != nil {
@@ -344,25 +308,25 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 
 	br := bufio.NewReader(in)
 	lastLines := 0
-	colorOutput := progress.IsTerminalWriter(out)
+	colorOutput := terminal.IsWriter(out)
 
 	for {
-		lines := fitRenderLines(model.render(), progress.TerminalWidth(out))
+		lines := fitRenderLines(model.render(), terminal.Width(out))
 		if colorOutput {
 			lines = colorizeRenderLines(lines, model)
 		}
 		if lastLines > 0 {
-			if err := clearProgressBlockChecked(out, lastLines); err != nil {
+			if err := terminal.ClearBlock(out, lastLines); err != nil {
 				return nil, false, fmt.Errorf("clear interactive output: %w", err)
 			}
 		}
 		for i, line := range lines {
 			if i > 0 {
-				if err := writeString(out, "\r\n"); err != nil {
+				if err := terminal.WriteString(out, "\r\n"); err != nil {
 					return nil, false, fmt.Errorf("write interactive output: %w", err)
 				}
 			}
-			if err := writeString(out, "\r"+line); err != nil {
+			if err := terminal.WriteString(out, "\r"+line); err != nil {
 				return nil, false, fmt.Errorf("write interactive output: %w", err)
 			}
 		}
@@ -371,7 +335,7 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 		k, err := readKey(br)
 		if err != nil {
 			if err == io.EOF {
-				if err := writeString(out, "\r\n"); err != nil {
+				if err := terminal.WriteString(out, "\r\n"); err != nil {
 					return nil, false, fmt.Errorf("write interactive output: %w", err)
 				}
 				return nil, true, nil
@@ -390,12 +354,12 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 			model.toggleAll()
 		case keyConfirm:
 			selected := model.selectedSpecs()
-			if err := writeString(out, "\r\n"); err != nil {
+			if err := terminal.WriteString(out, "\r\n"); err != nil {
 				return nil, false, fmt.Errorf("write interactive output: %w", err)
 			}
 			return selected, false, nil
 		case keyCancel:
-			if err := writeString(out, "\r\n"); err != nil {
+			if err := terminal.WriteString(out, "\r\n"); err != nil {
 				return nil, false, fmt.Errorf("write interactive output: %w", err)
 			}
 			return nil, true, nil

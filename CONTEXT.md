@@ -18,14 +18,13 @@ drifting to synonyms.
 - **Standalone push binary** — The dedicated, push-only build of `push_images`
   (engine + spec + validation, no Helm/render/upgrade). ~7 MB vs ~42 MB for the
   full CLI. This is what the bundle's push helper should be.
-- **Embedded push binary** — A prebuilt standalone push binary baked into
-  `helm-deep-pack` via `go:embed` (see ADR-0001) so `pull` can write it into the
-  bundle without a sibling file or network access.
+- **Release-hosted push binary** — The standalone `push_images` artifacts published
+  in GitHub releases and downloaded by `pull` for the selected destination
+  platform before staging into the bundle.
 - **Push manifest** — `push_images.json`, the on-disk contract between phases
   (`internal/pushspec`): the OCI layout dir name plus per-image source/target/digest.
 - **Push engine** — `internal/push`: the registry-transfer logic (archive, probe,
   interactive selection, concurrent push) shared by both the CLI `push` subcommand
   and the standalone push binary.
 - **Self-copy fallback** — Legacy/dev staging behavior where the push helper is a
-  byte copy of the running CLI. Retained only as a fallback when no embedded push
-  binary is present (placeholder builds).
+  byte copy of the running CLI. No longer used by the pull staging path.

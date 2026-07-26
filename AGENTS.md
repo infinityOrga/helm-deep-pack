@@ -73,6 +73,14 @@ Package dependency direction (no cycles): `pull` → `push`, `pushspec`;
   the CLI emits. It returns a stderr `slog.Logger`. Keep logging at command boundaries.
 - Never log secrets.
 
+### Import Aliasing
+- Default: do not alias imports; use the package's natural import name.
+- Alias only when required:
+  - package name is invalid/awkward as an identifier (for example `.../v1`),
+  - package name is too generic or conflicts in-file (for example `chart`, `name`),
+  - or there is a true name collision.
+- Avoid cosmetic aliases like `*pkg` suffixes.
+
 ### Status Reporting
 - `pull.Run`, `push.ArchiveImages`, and `push.PushImages` accept optional
   `io.Writer` status arguments for human-readable progress; keep this pattern.

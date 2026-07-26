@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="XScythe/helm-pull-images-cli"
+REPO="infinityOrga/helm-deep-pack"
 BINARY="helm-deep-pack"
 INSTALL_DIR="${HELM_DEEP_PACK_INSTALL:-/usr/local/bin}"
 VERSION="${HELM_DEEP_PACK_VERSION:-latest}"

@@ -27,13 +27,15 @@ import (
 )
 
 type Options struct {
-	Chart       string
-	Repo        string
-	Version     string
-	OutputDir   string
-	Concurrency int
-	ValuesFiles []string
-	SetValues   []string
+	Chart               string
+	Repo                string
+	Version             string
+	OutputDir           string
+	Concurrency         int
+	ValuesFiles         []string
+	SetValues           []string
+	DestinationPlatform string
+	HelperVersion       string
 }
 
 type PullResult struct {
@@ -68,7 +70,7 @@ type Runner struct {
 	archiveImages      func(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, error)
 	writePushManifest  func(outputDir string, specs []pushspec.ArchiveSpec) error
 	stageChartArchive  func(loaded loadedChart, outputDir string) (string, error)
-	stagePushBinary    func(outputDir string) (string, error)
+	stagePushBinary    func(ctx context.Context, outputDir, destinationPlatform, helperVersion string) (string, error)
 	localChartSource   chartSourceAdapter
 	helmChartSource    chartSourceAdapter
 	ociChartSource     chartSourceAdapter
@@ -94,7 +96,7 @@ func NewRunner() Runner {
 		archiveImages:     push.ArchiveImages,
 		writePushManifest: pushspec.WritePushManifest,
 		stageChartArchive: stageChartArchive,
-		stagePushBinary:   pushbin.Stage,
+		stagePushBinary:   pushbin.StageForPlatform,
 		chartCache:        &loadedCharts{byOpts: make(map[string]*loadedChart)},
 	}
 	r.extractChartImages = func(ctx context.Context, opts Options) ([]string, error) {

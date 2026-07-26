@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	upgradepkg "helm-deep-pack/internal/upgrade"
+	"helm-deep-pack/internal/upgrade"
 	"io"
 	"strings"
 	"testing"
@@ -58,9 +58,9 @@ func TestUpgradeCmd_RunEWiresOptions(t *testing.T) {
 	}()
 
 	called := false
-	var capturedOpts upgradepkg.Options
+	var capturedOpts upgrade.Options
 	var capturedErrWriters int
-	upgradeRun = func(ctx context.Context, opts upgradepkg.Options, errWriters ...io.Writer) error {
+	upgradeRun = func(ctx context.Context, opts upgrade.Options, errWriters ...io.Writer) error {
 		called = true
 		capturedOpts = opts
 		capturedErrWriters = len(errWriters)
@@ -103,7 +103,7 @@ func TestUpgradeCmd_PropagatesWorkflowError(t *testing.T) {
 		resetCmdVars("upgrade")
 	}()
 
-	upgradeRun = func(_ context.Context, _ upgradepkg.Options, _ ...io.Writer) error {
+	upgradeRun = func(_ context.Context, _ upgrade.Options, _ ...io.Writer) error {
 		return errors.New("boom")
 	}
 	upgradeAssumeYes = true

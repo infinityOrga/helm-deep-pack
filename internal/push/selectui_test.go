@@ -3,6 +3,7 @@ package push
 import (
 	"bufio"
 	"helm-deep-pack/internal/pushspec"
+	"helm-deep-pack/internal/termstyle"
 	"strings"
 	"testing"
 )
@@ -343,16 +344,16 @@ func TestColorizeRenderLines(t *testing.T) {
 	lines := model.render()
 	styled := colorizeRenderLines(lines, model)
 
-	if !strings.Contains(styled[0], ansiCyan) {
+	if !strings.Contains(styled[0], termstyle.Cyan) {
 		t.Fatalf("header not colorized: %q", styled[0])
 	}
-	if !strings.Contains(styled[1], ansiYellow) || !strings.Contains(styled[1], ansiBold) {
+	if !strings.Contains(styled[1], termstyle.Yellow) || !strings.Contains(styled[1], termstyle.Bold) {
 		t.Fatalf("selected missing row style mismatch: %q", styled[1])
 	}
-	if !strings.Contains(styled[2], ansiRed) {
+	if !strings.Contains(styled[2], termstyle.Red) {
 		t.Fatalf("conflict row style mismatch: %q", styled[2])
 	}
-	if !strings.Contains(styled[len(styled)-1], ansiBold) {
+	if !strings.Contains(styled[len(styled)-1], termstyle.Bold) {
 		t.Fatalf("footer style mismatch: %q", styled[len(styled)-1])
 	}
 }

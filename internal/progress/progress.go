@@ -2,42 +2,14 @@ package progress
 
 import (
 	"fmt"
+	"helm-deep-pack/internal/terminal"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
 const minRenderInterval = 80 * time.Millisecond
-
-// IsTerminalWriter reports whether w is a terminal.
-var IsTerminalWriter = func(w io.Writer) bool {
-	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
-
-// IsTerminalReader reports whether r is a terminal.
-func IsTerminalReader(r io.Reader) bool {
-	f, ok := r.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
 
 // StatusWriter returns the provided status writer or io.Discard.
 func StatusWriter(status ...io.Writer) io.Writer {
@@ -57,30 +29,6 @@ func NormalizeDisplayImage(image string) string {
 	default:
 		return image
 	}
-}
-
-// TerminalWidth returns the width of the terminal backing w, or 0.
-func TerminalWidth(w io.Writer) int {
-	f, ok := w.(*os.File)
-	if !ok {
-		return 0
-	}
-	width, _, err := term.GetSize(int(f.Fd()))
-	if err != nil {
-		return 0
-	}
-	return width
-}
-
-// TruncateForWidth truncates line to width bytes when width is positive.
-func TruncateForWidth(line string, width int) string {
-	if width <= 0 {
-		return line
-	}
-	if len(line) <= width {
-		return line
-	}
-	return line[:width]
 }
 
 // HumanizeBytes renders n in binary units with compact formatting.
@@ -110,14 +58,14 @@ type imageState struct {
 }
 
 type Progress struct {
-	mu        sync.Mutex
-	w         io.Writer
-	label     string
-	total     int
-	completed int
-	active    []string
-	states    map[string]*imageState
-	terminal  bool
+	mu         sync.Mutex
+	w          io.Writer
+	label      string
+	total      int
+	completed  int
+	active     []string
+	states     map[string]*imageState
+	terminal   bool
 	lastLen    int
 	lastLines  int
 	width      int
@@ -129,17 +77,17 @@ func New(w io.Writer, label string, total int) *Progress {
 	if w == nil {
 		w = io.Discard
 	}
-	terminal := IsTerminalWriter(w)
+	isTerminal := terminal.IsWriter(w)
 	width := 0
-	if terminal {
-		width = TerminalWidth(w)
+	if isTerminal {
+		width = terminal.Width(w)
 	}
 	return &Progress{
 		w:        w,
 		label:    label,
 		total:    total,
 		states:   make(map[string]*imageState),
-		terminal: terminal,
+		terminal: isTerminal,
 		width:    width,
 	}
 }
@@ -207,12 +155,12 @@ func (p *Progress) End(item string) {
 	}
 
 	if p.lastLines > 0 {
-		clearProgressBlock(p.w, p.lastLines)
+		_ = terminal.ClearBlock(p.w, p.lastLines)
 		p.lastLines = 0
 	}
 	summary := fmt.Sprintf("%s %s %s", NormalizeDisplayImage(item), HumanizeBytes(st.total), st.stage)
 	if p.width > 0 {
-		summary = TruncateForWidth(summary, p.width-1)
+		summary = terminal.Truncate(summary, p.width-1)
 	}
 	_, _ = fmt.Fprintln(p.w, summary)
 	p.drawLiveBlockLocked()
@@ -222,7 +170,7 @@ func (p *Progress) drawLiveBlockLocked() {
 	lines := p.formatLinesLocked()
 	if p.width > 0 {
 		for i, line := range lines {
-			lines[i] = TruncateForWidth(line, p.width-1)
+			lines[i] = terminal.Truncate(line, p.width-1)
 		}
 	}
 	for i, line := range lines {
@@ -285,11 +233,11 @@ func (p *Progress) renderLocked(item string, finished bool) {
 	lines := p.formatLinesLocked()
 	if p.width > 0 {
 		for i, line := range lines {
-			lines[i] = TruncateForWidth(line, p.width-1)
+			lines[i] = terminal.Truncate(line, p.width-1)
 		}
 	}
 	if p.lastLines > 0 {
-		clearProgressBlock(p.w, p.lastLines)
+		_ = terminal.ClearBlock(p.w, p.lastLines)
 	}
 	for i, line := range lines {
 		if i > 0 {
@@ -383,15 +331,5 @@ func (p *Progress) removeActiveLocked(item string) {
 			p.active = append(p.active[:i], p.active[i+1:]...)
 			return
 		}
-	}
-}
-
-func clearProgressBlock(w io.Writer, lines int) {
-	if lines <= 0 {
-		return
-	}
-	_, _ = fmt.Fprint(w, "\r\x1b[2K")
-	for i := 1; i < lines; i++ {
-		_, _ = fmt.Fprint(w, "\x1b[1A\r\x1b[2K")
 	}
 }

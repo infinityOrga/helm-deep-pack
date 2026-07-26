@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"context"
 	"helm-deep-pack/internal/push"
-	"helm-deep-pack/internal/pushcli"
 	"helm-deep-pack/internal/upgrade"
 	"io"
 	"log/slog"
@@ -74,17 +72,8 @@ func runPushHelperIfNeeded(args []string, in io.Reader, out, errOut io.Writer) (
 		helperArgs = helperArgs[1:]
 	}
 
-	cmd := pushcli.NewCommand(pushcli.Config{
-		Use:   "push_images [REGISTRY]",
-		Short: "Push mirrored images from generated OCI layout artifacts",
-		Run: func(ctx context.Context, opts push.Options, status ...io.Writer) error {
-			return pushRun(ctx, opts, status...)
-		},
-		LoggerFactory: commandLogger,
-		State: &pushcli.State{
-			Concurrency: 4,
-		},
-	})
+	helperState := newPushState()
+	cmd := newPushCommand("push_images [REGISTRY]", &helperState)
 	cmd.SilenceUsage = true
 	cmd.SetIn(in)
 	cmd.SetOut(out)

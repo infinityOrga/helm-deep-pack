@@ -10,13 +10,6 @@ builds:
   - id: helm-deep-pack
     main: .
     binary: helm-deep-pack
-    hooks:
-      pre:
-        - cmd: ./scripts/build-push-embed.sh
-          env:
-            - GOOS={{ .Os }}
-            - GOARCH={{ .Arch }}
-            - VERSION={{ .Version }}
     env:
       - CGO_ENABLED=0
     flags:
@@ -24,6 +17,9 @@ builds:
     ldflags:
       - -s -w
       - -X helm-deep-pack/cmd.version={{ .Version }}
+      - -X helm-deep-pack/internal/upgrade.releaseOwner={{ .Env.RELEASE_OWNER }}
+      - -X helm-deep-pack/internal/upgrade.releaseRepo={{ .Env.RELEASE_REPO }}
+      - -X helm-deep-pack/internal/upgrade.releaseBaseURL={{ .Env.RELEASE_BASE_URL }}
     goos:
       - linux
       - darwin
@@ -41,6 +37,9 @@ builds:
     ldflags:
       - -s -w
       - -X helm-deep-pack/cmd/pushimages.version={{ .Version }}
+      - -X helm-deep-pack/internal/upgrade.releaseOwner={{ .Env.RELEASE_OWNER }}
+      - -X helm-deep-pack/internal/upgrade.releaseRepo={{ .Env.RELEASE_REPO }}
+      - -X helm-deep-pack/internal/upgrade.releaseBaseURL={{ .Env.RELEASE_BASE_URL }}
     goos:
       - linux
       - darwin
@@ -52,6 +51,8 @@ builds:
 archives:
   - id: default
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    builds:
+      - helm-deep-pack
     formats:
       - tar.gz
     format_overrides:
@@ -60,6 +61,16 @@ archives:
           - zip
     files:
       - README.md
+  - id: push-images
+    name_template: "push_images_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    builds:
+      - push-images
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
 
 checksum:
   name_template: checksums.txt

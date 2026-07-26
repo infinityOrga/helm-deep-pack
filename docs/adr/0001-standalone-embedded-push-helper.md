@@ -1,10 +1,13 @@
 # ADR-0001: Stage a standalone, embedded push helper into pull bundles
 
 ## Status
-Accepted
+Superseded
 
 ## Date
 2026-06-26
+
+## Superseded by
+Release-hosted `push_images` helper staging (downloaded at pull time per destination platform).
 
 ## Context
 `pull` produces an **output bundle** (an OCI layout, `push_images.json`, the chart

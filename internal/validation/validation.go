@@ -21,10 +21,20 @@ import (
 	"net/url"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 
 	containername "github.com/google/go-containerregistry/pkg/name"
 )
+
+var supportedDestinationPlatforms = []string{
+	"darwin/amd64",
+	"darwin/arm64",
+	"linux/amd64",
+	"linux/arm64",
+	"windows/amd64",
+	"windows/arm64",
+}
 
 // maxConcurrency derives sensible max concurrency from system specs.
 // Use CPU count * 4 to allow some parallelism while respecting system resources.
@@ -203,6 +213,28 @@ func ValidateVersion(name, value string) error {
 	}
 	// Helm expects versions without v prefix (not enforced here, just a convention)
 	// The actual version resolution happens at runtime when fetching the chart.
+	return nil
+}
+
+// ParseDestinationPlatform validates os/arch format and returns normalized parts.
+func ParseDestinationPlatform(value string) (string, string, error) {
+	clean := strings.ToLower(strings.TrimSpace(value))
+	parts := strings.Split(clean, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("must be in os/arch format, got %q", value)
+	}
+	return parts[0], parts[1], nil
+}
+
+func ValidateDestinationPlatform(name, value string) error {
+	goos, goarch, err := ParseDestinationPlatform(value)
+	if err != nil {
+		return fmt.Errorf("%s %w", name, err)
+	}
+	platform := goos + "/" + goarch
+	if !slices.Contains(supportedDestinationPlatforms, platform) {
+		return fmt.Errorf("%s must be one of [%s], got %q", name, strings.Join(supportedDestinationPlatforms, ", "), value)
+	}
 	return nil
 }
 

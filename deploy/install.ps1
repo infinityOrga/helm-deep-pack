@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Repo = "XScythe/helm-pull-images-cli"
+$Repo = "infinityOrga/helm-deep-pack"
 $Binary = "helm-deep-pack.exe"
 $InstallDir = if ($env:HELM_DEEP_PACK_INSTALL) { $env:HELM_DEEP_PACK_INSTALL } else { Join-Path $env:LOCALAPPDATA "Programs\helm-deep-pack\bin" }
 $Version = if ($env:HELM_DEEP_PACK_VERSION) { $env:HELM_DEEP_PACK_VERSION } else { "latest" }

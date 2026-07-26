@@ -2,12 +2,16 @@ package cmd
 
 import (
 	"errors"
+	"io"
 	"os"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
-	pullpkg "helm-deep-pack/internal/pull"
+	"helm-deep-pack/internal/pull"
+	"helm-deep-pack/internal/terminal"
+	"helm-deep-pack/internal/termstyle"
 )
 
 func TestMain(m *testing.M) {
@@ -17,7 +21,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestPullCmd_FlagsRegistered(t *testing.T) {
-	flags := []string{"repo", "version", "output-dir", "concurrency", "values", "set", "allow-insecure-http", "verbose"}
+	flags := []string{"repo", "version", "output-dir", "concurrency", "values", "set", "destination-platform", "allow-insecure-http", "verbose"}
 	for _, flag := range flags {
 		AssertFlagExists(t, pullCmd, flag)
 	}
@@ -44,14 +48,15 @@ func TestPullCmd_FlagsNotExposed(t *testing.T) {
 
 func TestPullCmd_FlagTypes(t *testing.T) {
 	tests := map[string]string{
-		"repo":                "string",
-		"version":             "string",
-		"output-dir":          "string",
-		"concurrency":         "int",
-		"values":              "stringArray",
-		"set":                 "stringArray",
-		"allow-insecure-http": "bool",
-		"verbose":             "bool",
+		"repo":                 "string",
+		"version":              "string",
+		"output-dir":           "string",
+		"concurrency":          "int",
+		"values":               "stringArray",
+		"set":                  "stringArray",
+		"destination-platform": "string",
+		"allow-insecure-http":  "bool",
+		"verbose":              "bool",
 	}
 	for flagName, expectedType := range tests {
 		AssertFlagType(t, pullCmd, flagName, expectedType)
@@ -60,14 +65,15 @@ func TestPullCmd_FlagTypes(t *testing.T) {
 
 func TestPullCmd_FlagDefaults(t *testing.T) {
 	tests := map[string]string{
-		"repo":                "",
-		"version":             "",
-		"output-dir":          "",
-		"concurrency":         "4",
-		"values":              "[]",
-		"set":                 "[]",
-		"allow-insecure-http": "false",
-		"verbose":             "false",
+		"repo":                 "",
+		"version":              "",
+		"output-dir":           "",
+		"concurrency":          "4",
+		"values":               "[]",
+		"set":                  "[]",
+		"destination-platform": "",
+		"allow-insecure-http":  "false",
+		"verbose":              "false",
 	}
 	for flagName, expectedDefault := range tests {
 		AssertFlagDefault(t, pullCmd, flagName, expectedDefault)
@@ -256,76 +262,107 @@ func TestPullCmd_ValidateConcurrencyValid(t *testing.T) {
 	}
 }
 
+func TestPullCmd_ValidateDestinationPlatform(t *testing.T) {
+	capture, restore := spyPullRun(nil)
+	defer restore()
+
+	output := ExecuteCommand(pullCmd, []string{"nginx", "--destination-platform", "WINDOWS/AMD64"})
+	if output.Err != nil {
+		t.Fatalf("expected destination platform to validate, got: %v", output.Err)
+	}
+	if !capture.called {
+		t.Fatal("expected workflow to be called")
+	}
+	if capture.opts.DestinationPlatform != "windows/amd64" {
+		t.Fatalf("expected normalized destination platform, got %q", capture.opts.DestinationPlatform)
+	}
+}
+
+func TestPullCmd_ValidateDestinationPlatformInvalid(t *testing.T) {
+	output := ExecuteCommand(pullCmd, []string{"nginx", "--destination-platform", "freebsd/amd64"})
+	if output.Err == nil {
+		t.Fatal("expected error for unsupported destination platform")
+	}
+	if !strings.Contains(combinedErrorText(output), "destination-platform") {
+		t.Fatalf("expected destination-platform attribution, got: %s", combinedErrorText(output))
+	}
+}
+
 func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
-		want pullpkg.Options
+		want pull.Options
 	}{
 		{
 			name: "minimal",
 			args: []string{"nginx"},
-			want: pullpkg.Options{Chart: "nginx", Concurrency: 4},
+			want: pull.Options{Chart: "nginx", Concurrency: 4},
 		},
 		{
 			name: "with repo",
 			args: []string{"nginx", "--repo", "https://charts.example.com"},
-			want: pullpkg.Options{Chart: "nginx", Repo: "https://charts.example.com", Concurrency: 4},
+			want: pull.Options{Chart: "nginx", Repo: "https://charts.example.com", Concurrency: 4},
 		},
 		{
 			name: "with repo shorthand",
 			args: []string{"nginx", "-r", "https://charts.example.com"},
-			want: pullpkg.Options{Chart: "nginx", Repo: "https://charts.example.com", Concurrency: 4},
+			want: pull.Options{Chart: "nginx", Repo: "https://charts.example.com", Concurrency: 4},
 		},
 		{
 			name: "with version",
 			args: []string{"nginx", "--version", "1.0.0"},
-			want: pullpkg.Options{Chart: "nginx", Version: "1.0.0", Concurrency: 4},
+			want: pull.Options{Chart: "nginx", Version: "1.0.0", Concurrency: 4},
 		},
 		{
 			name: "with version shorthand",
 			args: []string{"nginx", "-v", "1.0.0"},
-			want: pullpkg.Options{Chart: "nginx", Version: "1.0.0", Concurrency: 4},
+			want: pull.Options{Chart: "nginx", Version: "1.0.0", Concurrency: 4},
 		},
 		{
 			name: "with output-dir",
 			args: []string{"nginx", "--output-dir", "/tmp/output"},
-			want: pullpkg.Options{Chart: "nginx", OutputDir: "/tmp/output", Concurrency: 4},
+			want: pull.Options{Chart: "nginx", OutputDir: "/tmp/output", Concurrency: 4},
 		},
 		{
 			name: "with output-dir shorthand",
 			args: []string{"nginx", "-o", "/tmp/output"},
-			want: pullpkg.Options{Chart: "nginx", OutputDir: "/tmp/output", Concurrency: 4},
+			want: pull.Options{Chart: "nginx", OutputDir: "/tmp/output", Concurrency: 4},
 		},
 		{
 			name: "with concurrency",
 			args: []string{"nginx", "--concurrency", "8"},
-			want: pullpkg.Options{Chart: "nginx", Concurrency: 8},
+			want: pull.Options{Chart: "nginx", Concurrency: 8},
 		},
 		{
 			name: "with concurrency shorthand",
 			args: []string{"nginx", "-c", "8"},
-			want: pullpkg.Options{Chart: "nginx", Concurrency: 8},
+			want: pull.Options{Chart: "nginx", Concurrency: 8},
+		},
+		{
+			name: "with destination platform",
+			args: []string{"nginx", "--destination-platform", "windows/amd64"},
+			want: pull.Options{Chart: "nginx", Concurrency: 4, DestinationPlatform: "windows/amd64"},
 		},
 		{
 			name: "with one values file",
 			args: []string{"nginx", "--values", "values.yaml"},
-			want: pullpkg.Options{Chart: "nginx", Concurrency: 4, ValuesFiles: []string{"values.yaml"}},
+			want: pull.Options{Chart: "nginx", Concurrency: 4, ValuesFiles: []string{"values.yaml"}},
 		},
 		{
 			name: "with ordered values files",
 			args: []string{"nginx", "-f", "values-a.yaml", "-f", "values-b.yaml"},
-			want: pullpkg.Options{Chart: "nginx", Concurrency: 4, ValuesFiles: []string{"values-a.yaml", "values-b.yaml"}},
+			want: pull.Options{Chart: "nginx", Concurrency: 4, ValuesFiles: []string{"values-a.yaml", "values-b.yaml"}},
 		},
 		{
 			name: "with set overrides",
 			args: []string{"nginx", "--set", "image.tag=v2", "--set", "sidecar.enabled=true"},
-			want: pullpkg.Options{Chart: "nginx", Concurrency: 4, SetValues: []string{"image.tag=v2", "sidecar.enabled=true"}},
+			want: pull.Options{Chart: "nginx", Concurrency: 4, SetValues: []string{"image.tag=v2", "sidecar.enabled=true"}},
 		},
 		{
 			name: "with values and set",
 			args: []string{"nginx", "-f", "values.yaml", "--set", "image.tag=v3"},
-			want: pullpkg.Options{
+			want: pull.Options{
 				Chart:       "nginx",
 				Concurrency: 4,
 				ValuesFiles: []string{"values.yaml"},
@@ -344,7 +381,7 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 				"--set", "image.tag=v2",
 				"-V",
 			},
-			want: pullpkg.Options{
+			want: pull.Options{
 				Chart:       "nginx",
 				Repo:        "https://charts.bitnami.com/bitnami",
 				Version:     "14.0.0",
@@ -360,7 +397,7 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 				"oci://localhost:5000/charts/nginx",
 				"--version", "14.0.0",
 			},
-			want: pullpkg.Options{
+			want: pull.Options{
 				Chart:       "oci://localhost:5000/charts/nginx",
 				Version:     "14.0.0",
 				Concurrency: 4,
@@ -373,7 +410,7 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 				"-r", "oci://localhost:5000/charts",
 				"-v", "14.0.0",
 			},
-			want: pullpkg.Options{
+			want: pull.Options{
 				Chart:       "nginx",
 				Repo:        "oci://localhost:5000/charts",
 				Version:     "14.0.0",
@@ -394,10 +431,81 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 			if !capture.called {
 				t.Fatal("expected workflow to be invoked, it was not")
 			}
+			tt.want.HelperVersion = Version()
 			if !reflect.DeepEqual(capture.opts, tt.want) {
 				t.Fatalf("Options mismatch:\n got  %+v\n want %+v", capture.opts, tt.want)
 			}
 		})
+	}
+}
+
+func TestPullCmd_WarnsForNonRecommendedDestination(t *testing.T) {
+	capture, restore := spyPullRun(nil)
+	defer restore()
+
+	output := ExecuteCommand(pullCmd, []string{"nginx", "--destination-platform", "linux/amd64"})
+	if output.Err != nil {
+		t.Fatalf("unexpected error: %v", output.Err)
+	}
+	if !capture.called {
+		t.Fatal("expected workflow to be called")
+	}
+	if !strings.Contains(strings.ToLower(output.Stderr), "warning: destination platform is") {
+		t.Fatalf("expected warning in stderr, got: %q", output.Stderr)
+	}
+	if !strings.Contains(output.Stderr, "--destination-platform windows/amd64") {
+		t.Fatalf("expected fix hint in warning, got: %q", output.Stderr)
+	}
+}
+
+func TestPullCmd_NoWarningForRecommendedDestination(t *testing.T) {
+	_, restore := spyPullRun(nil)
+	defer restore()
+
+	output := ExecuteCommand(pullCmd, []string{"nginx", "--destination-platform", "windows/amd64"})
+	if output.Err != nil {
+		t.Fatalf("unexpected error: %v", output.Err)
+	}
+	if strings.Contains(strings.ToLower(output.Stderr), "warning: destination platform is") {
+		t.Fatalf("did not expect warning for windows/amd64, got: %q", output.Stderr)
+	}
+}
+
+func TestPullCmd_DefaultDestinationWarningDependsOnHostPlatform(t *testing.T) {
+	_, restore := spyPullRun(nil)
+	defer restore()
+
+	output := ExecuteCommand(pullCmd, []string{"nginx"})
+	if output.Err != nil {
+		t.Fatalf("unexpected error: %v", output.Err)
+	}
+	hasWarning := strings.Contains(strings.ToLower(output.Stderr), "warning: destination platform is")
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		if hasWarning {
+			t.Fatalf("did not expect warning on windows/amd64 host, got: %q", output.Stderr)
+		}
+		return
+	}
+	if !hasWarning {
+		t.Fatalf("expected warning on non-windows/amd64 host, got: %q", output.Stderr)
+	}
+}
+
+func TestPullCmd_WarningColoredForTerminal(t *testing.T) {
+	orig := terminal.IsWriter
+	terminal.IsWriter = func(w io.Writer) bool {
+		return true
+	}
+	defer func() { terminal.IsWriter = orig }()
+
+	_, restore := spyPullRun(nil)
+	defer restore()
+	output := ExecuteCommand(pullCmd, []string{"nginx", "--destination-platform", "linux/amd64"})
+	if output.Err != nil {
+		t.Fatalf("unexpected error: %v", output.Err)
+	}
+	if !strings.Contains(output.Stderr, termstyle.Yellow+"warning:") || !strings.Contains(output.Stderr, termstyle.Reset) {
+		t.Fatalf("expected yellow warning output, got: %q", output.Stderr)
 	}
 }
 

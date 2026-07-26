@@ -29,7 +29,7 @@ git push origin v1.2.3
 4. Monitor the release workflow in GitHub Actions:
 
 ```bash
-echo "https://github.com/XScythe/helm-pull-images-cli/actions/workflows/release.yml"
+echo "https://github.com/infinityOrga/helm-deep-pack/actions/workflows/release.yml"
 ```
 
 5. (Optional) Edit generated release notes in the GitHub Release UI after publish.

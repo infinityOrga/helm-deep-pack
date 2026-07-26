@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	addpkg "helm-deep-pack/internal/add"
-	pullpkg "helm-deep-pack/internal/pull"
-	pushpkg "helm-deep-pack/internal/push"
+	"helm-deep-pack/internal/add"
+	"helm-deep-pack/internal/pull"
+	"helm-deep-pack/internal/push"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -133,14 +133,14 @@ func combinedErrorText(output *CapturedOutput) string {
 
 type pullCapture struct {
 	called bool
-	opts   pullpkg.Options
+	opts   pull.Options
 }
 
 func spyPullRun(retErr error) (*pullCapture, func()) {
 	resetCmdVars("pull")
 	capture := &pullCapture{}
 	orig := pullRun
-	pullRun = func(_ context.Context, opts pullpkg.Options, _ ...io.Writer) error {
+	pullRun = func(_ context.Context, opts pull.Options, _ ...io.Writer) error {
 		capture.called = true
 		capture.opts = opts
 		return retErr
@@ -154,14 +154,14 @@ func spyPullRun(retErr error) (*pullCapture, func()) {
 
 type addCapture struct {
 	called bool
-	opts   addpkg.Options
+	opts   add.Options
 }
 
 func spyAddRun(retErr error) (*addCapture, func()) {
 	resetCmdVars("add")
 	capture := &addCapture{}
 	orig := addRun
-	addRun = func(_ context.Context, opts addpkg.Options, _ ...io.Writer) error {
+	addRun = func(_ context.Context, opts add.Options, _ ...io.Writer) error {
 		capture.called = true
 		capture.opts = opts
 		return retErr
@@ -175,14 +175,14 @@ func spyAddRun(retErr error) (*addCapture, func()) {
 
 type pushCapture struct {
 	called bool
-	opts   pushpkg.Options
+	opts   push.Options
 }
 
 func spyPushRun(retErr error) (*pushCapture, func()) {
 	resetCmdVars("push")
 	capture := &pushCapture{}
 	orig := pushRun
-	pushRun = func(_ context.Context, opts pushpkg.Options, _ ...io.Writer) error {
+	pushRun = func(_ context.Context, opts push.Options, _ ...io.Writer) error {
 		capture.called = true
 		capture.opts = opts
 		return retErr
@@ -204,6 +204,8 @@ func resetCmdVars(cmdName string) {
 		pullConcurrency = 4
 		pullValuesFiles = nil
 		pullSetValues = nil
+		pullDestPlatform = ""
+		pullAllowHTTP = false
 		pullVerbose = false
 	case "add":
 		addImages = nil

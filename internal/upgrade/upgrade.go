@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,9 +26,11 @@ import (
 )
 
 const (
-	defaultOwner   = "XScythe"
-	defaultRepo    = "helm-pull-images-cli"
-	defaultBaseURL = "https://api.github.com"
+	defaultReleaseBaseURL = "https://api.github.com"
+)
+
+var (
+	releaseBaseURL = defaultReleaseBaseURL
 )
 
 var (
@@ -35,6 +38,13 @@ var (
 	evalSymlinks          = filepath.EvalSymlinks
 	runtimeGOOS           = runtime.GOOS
 	runtimeGOARCH         = runtime.GOARCH
+	readGitRemoteOrigin   = func() (string, error) {
+		output, err := exec.Command("git", "config", "--get", "remote.origin.url").Output()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(output)), nil
+	}
 )
 
 type Options struct {
@@ -76,7 +86,7 @@ type ghAsset struct {
 }
 
 func Run(ctx context.Context, opts Options, status ...io.Writer) error {
-	opts = applyDefaults(opts, status...)
+	opts = applyDefaults(opts)
 	executablePath, err := resolveExecutable()
 	if err != nil {
 		return err
@@ -165,7 +175,8 @@ func Run(ctx context.Context, opts Options, status ...io.Writer) error {
 	return nil
 }
 
-func applyDefaults(opts Options, status ...io.Writer) Options {
+func applyDefaults(opts Options) Options {
+	defaultOwner, defaultRepo := defaultReleaseTarget(opts.CurrentVersion)
 	if strings.TrimSpace(opts.Owner) == "" {
 		opts.Owner = defaultOwner
 	}
@@ -173,7 +184,7 @@ func applyDefaults(opts Options, status ...io.Writer) Options {
 		opts.Repo = defaultRepo
 	}
 	if strings.TrimSpace(opts.BaseURL) == "" {
-		opts.BaseURL = defaultBaseURL
+		opts.BaseURL = releaseBaseURL
 	}
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = &http.Client{Timeout: 60 * time.Second}
@@ -188,6 +199,61 @@ func applyDefaults(opts Options, status ...io.Writer) Options {
 		opts.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return opts
+}
+
+func defaultReleaseTarget(currentVersion string) (owner, repo string) {
+	owner = "infinityOrga"
+	repo = "helm-deep-pack"
+	if !isDevVersion(currentVersion) {
+		return owner, repo
+	}
+	gitRemote, err := readGitRemoteOrigin()
+	if err != nil {
+		return owner, repo
+	}
+	remoteOwner, remoteRepo, ok := parseGitRemote(gitRemote)
+	if !ok {
+		return owner, repo
+	}
+	return remoteOwner, remoteRepo
+}
+
+func parseGitRemote(raw string) (owner, repo string, ok bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", "", false
+	}
+	trimmed = strings.TrimSuffix(trimmed, ".git")
+
+	if strings.Contains(trimmed, "@") && strings.Contains(trimmed, ":") && !strings.Contains(trimmed, "://") {
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) != 2 {
+			return "", "", false
+		}
+		return parseOwnerRepoPath(parts[1])
+	}
+
+	parsedURL, err := url.Parse(trimmed)
+	if err != nil {
+		return "", "", false
+	}
+	return parseOwnerRepoPath(strings.TrimPrefix(parsedURL.Path, "/"))
+}
+
+func parseOwnerRepoPath(path string) (owner, repo string, ok bool) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func isDevVersion(version string) bool {
+	trimmed := strings.TrimSpace(version)
+	return trimmed == "" || strings.EqualFold(trimmed, "dev")
 }
 
 func resolveExecutable() (string, error) {
@@ -286,7 +352,7 @@ func normalizeTag(input string) (string, string, error) {
 }
 
 func normalizeCurrentVersion(version string) (string, string, bool) {
-	if strings.TrimSpace(version) == "" || strings.EqualFold(strings.TrimSpace(version), "dev") {
+	if isDevVersion(version) {
 		return "dev", "", false
 	}
 	tag, bare, err := normalizeTag(version)

@@ -4,29 +4,23 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"helm-deep-pack/internal/progress"
+	"helm-deep-pack/internal/terminal"
 	"io"
 	"strings"
 
 	"helm-deep-pack/internal/validation"
 )
 
-// errRegistryRequired signals that no registry was provided and none could be
-// obtained: either the prompt was cancelled (empty line, EOF) or no terminal
-// was available to prompt on.
+// errRegistryRequired indicates no usable registry was provided.
 var errRegistryRequired = errors.New("registry argument is required")
 
-// isInteractive reports whether both streams are terminals, i.e. we can safely
-// prompt the user rather than blocking on a read or writing to a non-tty. It is
-// a var so tests can drive the interactive branches without real terminals.
+// isInteractive reports whether prompting is safe on both streams.
+// Kept as a var so tests can override terminal detection.
 var isInteractive = func(in io.Reader, out io.Writer) bool {
-	return in != nil && progress.IsTerminalReader(in) && out != nil && progress.IsTerminalWriter(out)
+	return in != nil && terminal.IsReader(in) && out != nil && terminal.IsWriter(out)
 }
 
-// promptForRegistry obtains a registry interactively when one was not supplied.
-// It mirrors selectImagesToPush: interaction requires a terminal on both input
-// and output; otherwise it fails fast (rather than blocking on a read) so
-// non-interactive callers get a clear, deterministic error.
+// promptForRegistry prompts for a registry only in interactive mode.
 func promptForRegistry(in io.Reader, out io.Writer) (string, error) {
 	if !isInteractive(in, out) {
 		return "", errRegistryRequired
@@ -34,11 +28,8 @@ func promptForRegistry(in io.Reader, out io.Writer) (string, error) {
 	return readRegistryLoop(in, out)
 }
 
-// readRegistryLoop prompts on out and reads lines from in until a valid registry
-// is entered, re-prompting on invalid input. Validation reuses the same
-// validator as the positional argument so typed and supplied registries share
-// identical semantics. An empty submission or end of input cancels and returns
-// errRegistryRequired.
+// readRegistryLoop keeps prompting until a valid registry is entered.
+// Empty input or EOF is treated as cancel.
 func readRegistryLoop(in io.Reader, out io.Writer) (string, error) {
 	reader := bufio.NewReader(in)
 	for {
@@ -57,8 +48,7 @@ func readRegistryLoop(in io.Reader, out io.Writer) (string, error) {
 			}
 		}
 
-		// No more input means we cannot re-prompt; an empty submission is an
-		// explicit cancel. Either way, the registry stays unresolved.
+		// Stop on cancel or closed input.
 		if readErr != nil || registry == "" {
 			return "", errRegistryRequired
 		}

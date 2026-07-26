@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"helm-deep-pack/internal/progress"
 	"helm-deep-pack/internal/pushspec"
+	"helm-deep-pack/internal/terminal"
+	"helm-deep-pack/internal/termstyle"
 	"helm-deep-pack/internal/validation"
 	"io"
 	"net/http"
@@ -121,14 +123,10 @@ func pushImages(ctx context.Context, opts Options, probeClient *http.Client, sta
 	return pushSpecs(ctx, destRegistry, layoutPath, selected, opts.Concurrency, opts.AllowInsecureHTTP, status...)
 }
 
-// selectImagesToPush runs the interactive selection workflow over specs: it
-// classifies each image against the destination registry, surfaces probe
-// warnings, prompts the user to choose images, and confirms any conflicting
-// overwrites. The returned proceed flag is false when the caller should stop
-// without pushing (terminal unavailable aside, this covers user cancellation,
-// an empty selection, or a declined conflict confirmation).
+// selectImagesToPush runs the interactive chooser and conflict confirmation.
+// proceed=false means stop without pushing.
 func selectImagesToPush(ctx context.Context, opts Options, destRegistry string, specs []pushspec.ArchiveSpec) (selected []pushspec.ArchiveSpec, proceed bool, err error) {
-	if opts.In == nil || !progress.IsTerminalReader(opts.In) || opts.Out == nil || !progress.IsTerminalWriter(opts.Out) {
+	if opts.In == nil || !terminal.IsReader(opts.In) || opts.Out == nil || !terminal.IsWriter(opts.Out) {
 		return nil, false, fmt.Errorf("interactive selection requires terminal input and output; re-run with --all to push every image non-interactively")
 	}
 
@@ -180,12 +178,8 @@ func newRegistryProbeClient() *http.Client {
 	return &http.Client{Timeout: registryProbeTimeout}
 }
 
-// preflightRegistry verifies that the destination is a usable container registry
-// before any images are pushed. It delegates the reachability and registry
-// determination to go-containerregistry's transport.Ping — the same GET /v2/
-// probe the push path itself relies on, which understands the Docker Registry v2
-// status/auth-challenge contract (200, or 401 with a WWW-Authenticate challenge).
-// Local heuristics are only used to shape a friendlier error when Ping fails.
+// preflightRegistry verifies that the destination behaves like a container registry.
+// It uses transport.Ping and only adds heuristics for clearer error messages.
 func preflightRegistry(ctx context.Context, registry string, allowInsecureHTTP bool, probeClient *http.Client) error {
 	registry = strings.TrimRight(registry, "/")
 
@@ -213,9 +207,7 @@ func preflightRegistry(ctx context.Context, registry string, allowInsecureHTTP b
 		if looksLikeWebsite(err) {
 			return fmt.Errorf("registry %q is reachable but looks like a website, not an image registry", registry)
 		}
-		// A transport.Error means a server answered /v2/ but did not honour the
-		// registry API contract; anything else (dial failures, TLS errors, …)
-		// means the host could not be reached at all.
+		// transport.Error means /v2/ responded but not as a valid registry API.
 		var transportErr *transport.Error
 		if errors.As(err, &transportErr) {
 			return fmt.Errorf("registry %q is reachable but did not expose the container registry API at /v2/: %w", registry, err)
@@ -357,9 +349,9 @@ func confirmConflictSelection(in io.Reader, out io.Writer, conflicts []classifie
 
 	orange := ""
 	reset := ""
-	if progress.IsTerminalWriter(out) {
+	if terminal.IsWriter(out) {
 		orange = "\x1b[38;5;208m"
-		reset = "\x1b[0m"
+		reset = termstyle.Reset
 	}
 
 	if _, err := fmt.Fprintf(out, "\r\n%sWARNING:%s %d selected image(s) are marked [conflict] because the destination already exists with a different digest.\r\n", orange, reset, conflictCount); err != nil {
@@ -410,9 +402,8 @@ func confirmConflictSelection(in io.Reader, out io.Writer, conflicts []classifie
 	}
 }
 
-// confirmInsecureHTTP warns that the registry serves plain HTTP and asks whether
-// to continue over HTTP anyway. It defaults to no: an empty answer, "no", or EOF
-// declines, so an accidental Enter never opts into insecure transport.
+// confirmInsecureHTTP asks whether to continue over plain HTTP.
+// Default is no (empty input, "no", or EOF).
 func confirmInsecureHTTP(in io.Reader, out io.Writer, registry string) (bool, error) {
 	if in == nil {
 		return false, fmt.Errorf("missing input stream")
@@ -423,9 +414,9 @@ func confirmInsecureHTTP(in io.Reader, out io.Writer, registry string) (bool, er
 
 	yellow := ""
 	reset := ""
-	if progress.IsTerminalWriter(out) {
-		yellow = "\x1b[33m"
-		reset = "\x1b[0m"
+	if terminal.IsWriter(out) {
+		yellow = termstyle.Yellow
+		reset = termstyle.Reset
 	}
 
 	if _, err := fmt.Fprintf(out, "%swarning:%s registry %q appears to serve plain HTTP, not HTTPS.\n", yellow, reset, registry); err != nil {
@@ -494,9 +485,7 @@ func copyImageToRegistryUsingGoContainerRegistry(ctx context.Context, registry s
 	return nil
 }
 
-// plainHTTPRegistryError signals that an HTTPS preflight probe found a registry
-// serving plain HTTP. It is a distinct type so callers can detect the case and,
-// when interactive, offer to continue over HTTP instead of failing outright.
+// plainHTTPRegistryError indicates an HTTPS probe reached an HTTP registry.
 type plainHTTPRegistryError struct {
 	registry string
 }

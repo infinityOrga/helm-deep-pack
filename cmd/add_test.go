@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	addpkg "helm-deep-pack/internal/add"
+	"helm-deep-pack/internal/add"
 )
 
 func TestAddCmd_FlagsRegistered(t *testing.T) {
@@ -136,37 +136,37 @@ func TestAddCmd_FlagsMapToOptions(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
-		want addpkg.Options
+		want add.Options
 	}{
 		{
 			name: "minimal single image",
 			args: []string{"nginx"},
-			want: addpkg.Options{Images: []string{"nginx"}, Concurrency: 4},
+			want: add.Options{Images: []string{"nginx"}, Concurrency: 4},
 		},
 		{
 			name: "multiple images",
 			args: []string{"nginx", "redis", "postgres"},
-			want: addpkg.Options{Images: []string{"nginx", "redis", "postgres"}, Concurrency: 4},
+			want: add.Options{Images: []string{"nginx", "redis", "postgres"}, Concurrency: 4},
 		},
 		{
 			name: "with output-dir",
 			args: []string{"nginx", "--output-dir", "/tmp/output"},
-			want: addpkg.Options{Images: []string{"nginx"}, OutputDir: "/tmp/output", Concurrency: 4},
+			want: add.Options{Images: []string{"nginx"}, OutputDir: "/tmp/output", Concurrency: 4},
 		},
 		{
 			name: "with output-dir shorthand",
 			args: []string{"nginx", "-o", "/tmp/output"},
-			want: addpkg.Options{Images: []string{"nginx"}, OutputDir: "/tmp/output", Concurrency: 4},
+			want: add.Options{Images: []string{"nginx"}, OutputDir: "/tmp/output", Concurrency: 4},
 		},
 		{
 			name: "with concurrency",
 			args: []string{"nginx", "--concurrency", "8"},
-			want: addpkg.Options{Images: []string{"nginx"}, Concurrency: 8},
+			want: add.Options{Images: []string{"nginx"}, Concurrency: 8},
 		},
 		{
 			name: "with concurrency shorthand",
 			args: []string{"nginx", "-c", "8"},
-			want: addpkg.Options{Images: []string{"nginx"}, Concurrency: 8},
+			want: add.Options{Images: []string{"nginx"}, Concurrency: 8},
 		},
 		{
 			name: "all flags",
@@ -177,7 +177,7 @@ func TestAddCmd_FlagsMapToOptions(t *testing.T) {
 				"-c", "8",
 				"-V",
 			},
-			want: addpkg.Options{
+			want: add.Options{
 				Images:      []string{"nginx:latest", "redis:7"},
 				OutputDir:   "/tmp/custom",
 				Concurrency: 8,

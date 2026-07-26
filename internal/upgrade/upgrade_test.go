@@ -47,6 +47,84 @@ func TestParseChecksums(t *testing.T) {
 	}
 }
 
+func TestDefaultReleaseLookupOptions_UsesConfiguredDefaultsAndCurrentVersion(t *testing.T) {
+	origReadGitRemoteOrigin := readGitRemoteOrigin
+	origBaseURL := releaseBaseURL
+	defer func() {
+		readGitRemoteOrigin = origReadGitRemoteOrigin
+		releaseBaseURL = origBaseURL
+	}()
+
+	readGitRemoteOrigin = func() (string, error) {
+		return "git@github.com:acme-org/mirror-tool.git", nil
+	}
+	releaseBaseURL = "https://gh.example.test/api/v3"
+
+	opts := DefaultReleaseLookupOptions("dev")
+	if opts.Owner != "acme-org" {
+		t.Fatalf("owner = %q, want %q", opts.Owner, "acme-org")
+	}
+	if opts.Repo != "mirror-tool" {
+		t.Fatalf("repo = %q, want %q", opts.Repo, "mirror-tool")
+	}
+	if opts.BaseURL != "https://gh.example.test/api/v3" {
+		t.Fatalf("baseURL = %q, want %q", opts.BaseURL, "https://gh.example.test/api/v3")
+	}
+	if opts.CurrentVersion != "dev" {
+		t.Fatalf("currentVersion = %q, want %q", opts.CurrentVersion, "dev")
+	}
+}
+
+func TestDefaultReleaseTarget_UsesBuiltInDefaultsOutsideDev(t *testing.T) {
+	origReadGitRemoteOrigin := readGitRemoteOrigin
+	defer func() { readGitRemoteOrigin = origReadGitRemoteOrigin }()
+
+	readGitRemoteOrigin = func() (string, error) {
+		return "git@github.com:acme-org/mirror-tool.git", nil
+	}
+
+	owner, repo := defaultReleaseTarget("v1.2.3")
+	if owner != "infinityOrga" {
+		t.Fatalf("owner = %q, want %q", owner, "infinityOrga")
+	}
+	if repo != "helm-deep-pack" {
+		t.Fatalf("repo = %q, want %q", repo, "helm-deep-pack")
+	}
+}
+
+func TestParseGitRemote(t *testing.T) {
+	tests := []struct {
+		name       string
+		remote     string
+		wantOwner  string
+		wantRepo   string
+		wantParsed bool
+	}{
+		{name: "https", remote: "https://github.com/acme-org/mirror-tool.git", wantOwner: "acme-org", wantRepo: "mirror-tool", wantParsed: true},
+		{name: "ssh", remote: "git@github.com:acme-org/mirror-tool.git", wantOwner: "acme-org", wantRepo: "mirror-tool", wantParsed: true},
+		{name: "ssh_url", remote: "ssh://git@github.com/acme-org/mirror-tool.git", wantOwner: "acme-org", wantRepo: "mirror-tool", wantParsed: true},
+		{name: "invalid", remote: "not-a-remote", wantParsed: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner, repo, ok := parseGitRemote(tt.remote)
+			if ok != tt.wantParsed {
+				t.Fatalf("parseGitRemote(%q) parsed = %v, want %v", tt.remote, ok, tt.wantParsed)
+			}
+			if !tt.wantParsed {
+				return
+			}
+			if owner != tt.wantOwner {
+				t.Fatalf("owner = %q, want %q", owner, tt.wantOwner)
+			}
+			if repo != tt.wantRepo {
+				t.Fatalf("repo = %q, want %q", repo, tt.wantRepo)
+			}
+		})
+	}
+}
+
 func TestExtractFromTarGz(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "test.tar.gz")
 	if err := os.WriteFile(archive, buildTarGz(t, "bin/helm-deep-pack", []byte("new-binary")), 0o644); err != nil {

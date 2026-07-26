@@ -291,3 +291,55 @@ func TestValidateImage(t *testing.T) {
 		})
 	}
 }
+
+func TestParseDestinationPlatform(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantOS    string
+		wantArch  string
+		wantError bool
+	}{
+		{name: "valid", input: "windows/amd64", wantOS: "windows", wantArch: "amd64"},
+		{name: "valid uppercase and spaced", input: "  WINDOWS/ARM64  ", wantOS: "windows", wantArch: "arm64"},
+		{name: "missing arch", input: "windows", wantError: true},
+		{name: "too many segments", input: "windows/amd64/extra", wantError: true},
+		{name: "empty", input: "", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotOS, gotArch, err := ParseDestinationPlatform(tt.input)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("ParseDestinationPlatform() err = %v, wantError %v", err, tt.wantError)
+			}
+			if tt.wantError {
+				return
+			}
+			if gotOS != tt.wantOS || gotArch != tt.wantArch {
+				t.Fatalf("ParseDestinationPlatform() = %s/%s, want %s/%s", gotOS, gotArch, tt.wantOS, tt.wantArch)
+			}
+		})
+	}
+}
+
+func TestValidateDestinationPlatform(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantError bool
+	}{
+		{name: "supported", input: "linux/amd64"},
+		{name: "supported uppercase", input: "WINDOWS/AMD64"},
+		{name: "unsupported combo", input: "freebsd/amd64", wantError: true},
+		{name: "invalid format", input: "linux-amd64", wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDestinationPlatform("--destination-platform", tt.input)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("ValidateDestinationPlatform() err = %v, wantError %v", err, tt.wantError)
+			}
+		})
+	}
+}

@@ -7,13 +7,13 @@
 macOS/Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/XScythe/helm-pull-images-cli/main/deploy/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/infinityOrga/helm-deep-pack/main/deploy/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/XScythe/helm-pull-images-cli/main/deploy/install.ps1 | iex"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/infinityOrga/helm-deep-pack/main/deploy/install.ps1 | iex"
 ```
 
 Installers detect OS/architecture, download the latest stable release from GitHub, and install `helm-deep-pack`:
@@ -24,11 +24,11 @@ Installers detect OS/architecture, download the latest stable release from GitHu
 Pin a specific release:
 
 ```bash
-HELM_DEEP_PACK_VERSION=v1.2.3 curl -fsSL https://raw.githubusercontent.com/XScythe/helm-pull-images-cli/main/deploy/install.sh | sh
+HELM_DEEP_PACK_VERSION=v1.2.3 curl -fsSL https://raw.githubusercontent.com/infinityOrga/helm-deep-pack/main/deploy/install.sh | sh
 ```
 
 ```powershell
-$env:HELM_DEEP_PACK_VERSION="v1.2.3"; iwr -useb https://raw.githubusercontent.com/XScythe/helm-pull-images-cli/main/deploy/install.ps1 | iex
+$env:HELM_DEEP_PACK_VERSION="v1.2.3"; iwr -useb https://raw.githubusercontent.com/infinityOrga/helm-deep-pack/main/deploy/install.ps1 | iex
 ```
 
 ## Quick start
@@ -62,13 +62,18 @@ helm-deep-pack upgrade --version 1.2.3 --yes
 ## Pull command
 
 ```bash
-helm-deep-pack pull CHART [--repo REPO] [--version VERSION] [--output-dir DIR] [--concurrency N] [--values FILE]... [--set KEY=VALUE]... [--allow-insecure-http]
+helm-deep-pack pull CHART [--repo REPO] [--version VERSION] [--output-dir DIR] [--concurrency N] [--values FILE]... [--set KEY=VALUE]... [--destination-platform OS/ARCH] [--allow-insecure-http]
 ```
 
 - `CHART` can be a chart name, local chart path, or `oci://...` reference.
 - `--repo` is HTTPS by default; use `--allow-insecure-http` only for intentionally plain-HTTP chart repositories.
 - Use `--values`/`-f` and `--set` to render deployment-specific variants that expose optional image references.
 - The tool extracts images from the rendered manifests you request; it does not enumerate every possible template permutation automatically.
+- `--destination-platform` controls which platform helper binary is staged into the bundle (`os/arch`, for example `windows/amd64`). If omitted, it defaults to the current host platform.
+- `windows/amd64` is the recommended destination target. `pull` prints a warning whenever the effective destination is not `windows/amd64`, including how to fix it.
+- `pull` downloads the destination `push_images` helper from GitHub release assets and verifies it against `checksums.txt`; network access is required at pull time.
+- In local dev runs (`go run`, version `dev`), `pull` builds `cmd/pushimages` on demand for the selected destination platform instead of fetching release helper assets.
+- Release source defaults are embedded at build time via GoReleaser ldflags. If you fork or transfer the repository, update the build-time values in the release workflow rather than changing runtime config.
 
 Examples:
 
@@ -129,6 +134,7 @@ helm-deep-pack upgrade [--version VERSION] [--force] [--yes]
 ```
 
 - Without `--version`, `upgrade` installs the latest stable GitHub release.
+- `upgrade` uses the same build-time embedded release source values as `pull`.
 - `--version` accepts either `1.2.3` or `v1.2.3`.
 - `--yes` skips the confirmation prompt.
 - `--force` reinstalls even when already on the selected version.

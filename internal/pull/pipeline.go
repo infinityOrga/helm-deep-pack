@@ -84,7 +84,7 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 		return PullResult{}, fmt.Errorf("stage chart archive: %w", err)
 	}
 
-	if _, err := r.stagePushBinary(outputDir); err != nil {
+	if _, err := r.stagePushBinary(runCtx, outputDir, opts.DestinationPlatform, opts.HelperVersion); err != nil {
 		return PullResult{}, fmt.Errorf("stage push binary: %w", err)
 	}
 

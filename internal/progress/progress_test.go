@@ -2,6 +2,7 @@ package progress
 
 import (
 	"bytes"
+	"helm-deep-pack/internal/terminal"
 	"io"
 	"strings"
 	"testing"
@@ -9,9 +10,9 @@ import (
 )
 
 func TestProgressRendersPerImageBytesAndStages(t *testing.T) {
-	orig := IsTerminalWriter
-	IsTerminalWriter = func(io.Writer) bool { return true }
-	defer func() { IsTerminalWriter = orig }()
+	orig := terminal.IsWriter
+	terminal.IsWriter = func(io.Writer) bool { return true }
+	defer func() { terminal.IsWriter = orig }()
 
 	var buf bytes.Buffer
 	p := New(&buf, "pulling", 2)
