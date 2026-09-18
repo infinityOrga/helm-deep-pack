@@ -12,18 +12,18 @@ import (
 
 func TestRun(t *testing.T) {
 	tests := []struct {
-		name                string
-		opts                Options
-		existingManifest    *pushspec.PushManifest
-		readManifestErr     error
-		archivedSpecs       []pushspec.ArchiveSpec
-		archiveImagesErr    error
-		writeManifestErr    error
-		wantErr             bool
-		wantErrContains     string
-		wantArchivedImages  []string
-		wantWrittenSpecs    []pushspec.ArchiveSpec
-		wantStatusContains  string
+		name               string
+		opts               Options
+		existingManifest   *pushspec.PushManifest
+		readManifestErr    error
+		archivedSpecs      []pushspec.ArchiveSpec
+		archiveImagesErr   error
+		writeManifestErr   error
+		wantErr            bool
+		wantErrContains    string
+		wantArchivedImages []string
+		wantWrittenSpecs   []pushspec.ArchiveSpec
+		wantStatusContains string
 	}{
 		{
 			name: "dedupe skips existing images",
@@ -40,7 +40,7 @@ func TestRun(t *testing.T) {
 				},
 			},
 			archivedSpecs: []pushspec.ArchiveSpec{
-				{Image: "postgres:14", Target: "library/postgres:14", OCIDigest: "sha256:ghi"},
+				{Image: "postgres:14", Target: "library/postgres:14", OCIDigest: "sha256:ghi", Optional: true, OptionalFlags: []string{".Values.postgres.enabled"}},
 			},
 			wantArchivedImages: []string{"postgres:14"},
 			wantWrittenSpecs: []pushspec.ArchiveSpec{
@@ -57,9 +57,9 @@ func TestRun(t *testing.T) {
 				Images:      []string{"nginx:1.27"},
 				Concurrency: 2,
 			},
-			readManifestErr:     fmt.Errorf("no such file"),
-			wantErr:             true,
-			wantErrContains:     "read push manifest",
+			readManifestErr: fmt.Errorf("no such file"),
+			wantErr:         true,
+			wantErrContains: "read push manifest",
 		},
 		{
 			name: "only new images archived",
@@ -261,7 +261,7 @@ func equalArchiveSpecs(a, b []pushspec.ArchiveSpec) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].Image != b[i].Image || a[i].Target != b[i].Target || a[i].OCIDigest != b[i].OCIDigest {
+		if a[i].Image != b[i].Image || a[i].Target != b[i].Target || a[i].OCIDigest != b[i].OCIDigest || a[i].Optional != b[i].Optional || !equalStringSlices(a[i].OptionalFlags, b[i].OptionalFlags) {
 			return false
 		}
 	}

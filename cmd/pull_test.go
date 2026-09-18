@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"helm-deep-pack/internal/pull"
 	"helm-deep-pack/internal/terminal"
@@ -21,7 +22,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestPullCmd_FlagsRegistered(t *testing.T) {
-	flags := []string{"repo", "version", "output-dir", "concurrency", "values", "set", "destination-platform", "allow-insecure-http", "verbose"}
+	flags := []string{"repo", "version", "output-dir", "concurrency", "values", "set", "destination-platform", "allow-insecure-http", "verbose", "rendered-only", "optional-image-timeout"}
 	for _, flag := range flags {
 		AssertFlagExists(t, pullCmd, flag)
 	}
@@ -48,15 +49,17 @@ func TestPullCmd_FlagsNotExposed(t *testing.T) {
 
 func TestPullCmd_FlagTypes(t *testing.T) {
 	tests := map[string]string{
-		"repo":                 "string",
-		"version":              "string",
-		"output-dir":           "string",
-		"concurrency":          "int",
-		"values":               "stringArray",
-		"set":                  "stringArray",
-		"destination-platform": "string",
-		"allow-insecure-http":  "bool",
-		"verbose":              "bool",
+		"repo":                   "string",
+		"version":                "string",
+		"output-dir":             "string",
+		"concurrency":            "int",
+		"values":                 "stringArray",
+		"set":                    "stringArray",
+		"destination-platform":   "string",
+		"allow-insecure-http":    "bool",
+		"verbose":                "bool",
+		"rendered-only":          "bool",
+		"optional-image-timeout": "duration",
 	}
 	for flagName, expectedType := range tests {
 		AssertFlagType(t, pullCmd, flagName, expectedType)
@@ -65,15 +68,17 @@ func TestPullCmd_FlagTypes(t *testing.T) {
 
 func TestPullCmd_FlagDefaults(t *testing.T) {
 	tests := map[string]string{
-		"repo":                 "",
-		"version":              "",
-		"output-dir":           "",
-		"concurrency":          "4",
-		"values":               "[]",
-		"set":                  "[]",
-		"destination-platform": "",
-		"allow-insecure-http":  "false",
-		"verbose":              "false",
+		"repo":                   "",
+		"version":                "",
+		"output-dir":             "",
+		"concurrency":            "4",
+		"values":                 "[]",
+		"set":                    "[]",
+		"destination-platform":   "",
+		"allow-insecure-http":    "false",
+		"verbose":                "false",
+		"rendered-only":          "false",
+		"optional-image-timeout": "15s",
 	}
 	for flagName, expectedDefault := range tests {
 		AssertFlagDefault(t, pullCmd, flagName, expectedDefault)
@@ -245,7 +250,7 @@ func TestPullCmd_ValidateConcurrencyInvalid(t *testing.T) {
 }
 
 func TestPullCmd_ValidateConcurrencyValid(t *testing.T) {
-	validConcurrencies := []string{"1", "4", "8", "16"}
+	validConcurrencies := validConcurrencyValues()
 	for _, concurrency := range validConcurrencies {
 		t.Run(concurrency, func(t *testing.T) {
 			capture, restore := spyPullRun(nil)
@@ -259,6 +264,16 @@ func TestPullCmd_ValidateConcurrencyValid(t *testing.T) {
 				t.Fatalf("expected workflow to be called for concurrency=%s", concurrency)
 			}
 		})
+	}
+}
+
+func TestPullCmd_ValidateOptionalImageTimeoutInvalid(t *testing.T) {
+	output := ExecuteCommand(pullCmd, []string{"nginx", "--optional-image-timeout", "-1s"})
+	if output.Err == nil {
+		t.Fatal("expected negative optional image timeout to fail validation")
+	}
+	if !strings.Contains(combinedErrorText(output), "optional-image-timeout") {
+		t.Fatalf("expected timeout-related error, got: %s", combinedErrorText(output))
 	}
 }
 
@@ -343,6 +358,16 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 			name: "with destination platform",
 			args: []string{"nginx", "--destination-platform", "windows/amd64"},
 			want: pull.Options{Chart: "nginx", Concurrency: 4, DestinationPlatform: "windows/amd64"},
+		},
+		{
+			name: "rendered-only",
+			args: []string{"nginx", "--rendered-only"},
+			want: pull.Options{Chart: "nginx", Concurrency: 4, RenderedOnly: true},
+		},
+		{
+			name: "optional image timeout",
+			args: []string{"nginx", "--optional-image-timeout", "2s"},
+			want: pull.Options{Chart: "nginx", Concurrency: 4, OptionalImageTimeout: 2 * time.Second},
 		},
 		{
 			name: "with one values file",
@@ -432,6 +457,9 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 				t.Fatal("expected workflow to be invoked, it was not")
 			}
 			tt.want.HelperVersion = Version()
+			if tt.want.OptionalImageTimeout == 0 {
+				tt.want.OptionalImageTimeout = pull.DefaultOptionalImageTimeout
+			}
 			if !reflect.DeepEqual(capture.opts, tt.want) {
 				t.Fatalf("Options mismatch:\n got  %+v\n want %+v", capture.opts, tt.want)
 			}

@@ -148,7 +148,7 @@ func TestPushCmd_ValidateConcurrencyInvalid(t *testing.T) {
 }
 
 func TestPushCmd_ValidateConcurrencyValid(t *testing.T) {
-	validConcurrencies := []string{"1", "4", "8", "16"}
+	validConcurrencies := validConcurrencyValues()
 	for _, concurrency := range validConcurrencies {
 		t.Run(concurrency, func(t *testing.T) {
 			capture, restore := spyPushRun(nil)

@@ -23,6 +23,18 @@ drifting to synonyms.
   platform before staging into the bundle.
 - **Push manifest** — `push_images.json`, the on-disk contract between phases
   (`internal/pushspec`): the OCI layout dir name plus per-image source/target/digest.
+  An image may also carry an `optional` marker and best-effort `optionalFlags`
+  Helm value paths; older manifests omit these fields and remain readable.
+- **Optional image** — An image absent from the normal render, including an
+  annotation-only image or an image found only by the synthetic inventory render.
+  Required status wins when the same image appears in both inventories.
+- **Synthetic inventory render** — A second, inventory-only Helm render that
+  enables every effective boolean value while preserving non-boolean values. It
+  produces a discoverable union with the normal render; it does not enumerate
+  arbitrary Helm value permutations.
+- **Optional flag attribution** — Bounded, best-effort render probes that try to
+  associate an optional image with the smallest known set of false Helm boolean
+  value paths. Attribution failure never removes the optional marker.
 - **Push engine** — `internal/push`: the registry-transfer logic (archive, probe,
   interactive selection, concurrent push) shared by both the CLI `push` subcommand
   and the standalone push binary.

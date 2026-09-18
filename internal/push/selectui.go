@@ -118,6 +118,12 @@ func (m *selectModel) render() []string {
 			target = m.registry + "/" + target
 		}
 		body := progress.NormalizeDisplayImage(m.items[i].Spec.Image) + " → " + target
+		if m.items[i].Spec.Optional {
+			body += " [optional]"
+			if len(m.items[i].Spec.OptionalFlags) > 0 {
+				body += ": " + strings.Join(m.items[i].Spec.OptionalFlags, ", ")
+			}
+		}
 		status := ""
 		switch m.items[i].Status {
 		case statusPushable:

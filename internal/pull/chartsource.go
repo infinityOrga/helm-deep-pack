@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/getter"
@@ -29,7 +30,37 @@ func (r Runner) extractChartAnnotationImages(ctx context.Context, opts Options) 
 	if err != nil {
 		return nil, err
 	}
-	return chartimages.ExtractChartAnnotationImages(loaded.Chart.Metadata.Annotations)
+	return extractChartAnnotationImagesRecursive(loaded.Chart)
+}
+
+func extractChartAnnotationImagesRecursive(chrt *helmchart.Chart) ([]string, error) {
+	// This adapter keeps traversal in the pull package while leaving annotation
+	// payload parsing and image validation in chartimages.
+	var images []string
+	var visit func(*helmchart.Chart) error
+	visit = func(current *helmchart.Chart) error {
+		if current == nil {
+			return nil
+		}
+		if current.Metadata != nil {
+			found, err := chartimages.ExtractChartAnnotationImages(current.Metadata.Annotations)
+			if err != nil {
+				return err
+			}
+			images = appendUnique(images, found...)
+		}
+		for _, dependency := range current.Dependencies() {
+			if err := visit(dependency); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if err := visit(chrt); err != nil {
+		return nil, err
+	}
+	return images, nil
 }
 
 func (r Runner) loadChart(ctx context.Context, opts Options) (loadedChart, error) {

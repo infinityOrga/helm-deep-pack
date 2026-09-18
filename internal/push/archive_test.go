@@ -100,6 +100,53 @@ func TestArchiveImagesFailsOnCopyError(t *testing.T) {
 	}
 }
 
+func TestArchiveImagesBestEffortReturnsSuccessfulSpecsAndFailures(t *testing.T) {
+	originalFetch := fetchRemoteImage
+	originalWriteLayout := writeLayout
+	originalFromLayout := fromLayoutPath
+	originalAppend := appendLayoutImage
+	originalWrite := writeLayoutImage
+	defer func() {
+		fetchRemoteImage = originalFetch
+		writeLayout = originalWriteLayout
+		fromLayoutPath = originalFromLayout
+		appendLayoutImage = originalAppend
+		writeLayoutImage = originalWrite
+	}()
+
+	fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
+		if ref.String() == "quay.io/example/missing:v1" {
+			return nil, errors.New("image unavailable")
+		}
+		return fakeImageWithDigest(t, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), nil
+	}
+	writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
+		return layout.Path(path), nil
+	}
+	fromLayoutPath = func(path string) (layout.Path, error) {
+		return layout.Path(path), nil
+	}
+	writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+	appendLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+
+	specs, failures, err := ArchiveImagesBestEffort(context.Background(), []string{
+		"quay.io/example/missing:v1",
+		"quay.io/example/available:v1",
+	}, t.TempDir(), 2)
+	if err != nil {
+		t.Fatalf("ArchiveImagesBestEffort() error = %v", err)
+	}
+	if len(specs) != 1 || specs[0].Image != "quay.io/example/available:v1" {
+		t.Fatalf("ArchiveImagesBestEffort() specs = %#v, want the available image only", specs)
+	}
+	if len(failures) != 1 || failures[0].Image != "quay.io/example/missing:v1" {
+		t.Fatalf("ArchiveImagesBestEffort() failures = %#v, want the missing image only", failures)
+	}
+	if !strings.Contains(failures[0].Err.Error(), "image unavailable") {
+		t.Fatalf("ArchiveImagesBestEffort() failure = %v, want source error", failures[0].Err)
+	}
+}
+
 func TestArchiveImagesSupportsDigestReferences(t *testing.T) {
 	originalFetch := fetchRemoteImage
 	originalWriteLayout := writeLayout

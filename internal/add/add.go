@@ -68,6 +68,12 @@ func (r Runner) Run(ctx context.Context, opts Options, status ...io.Writer) erro
 	if err != nil {
 		return fmt.Errorf("archive new images: %w", err)
 	}
+	for index := range newSpecs {
+		// Images supplied explicitly through add are required, regardless of
+		// metadata returned by an archive collaborator.
+		newSpecs[index].Optional = false
+		newSpecs[index].OptionalFlags = nil
+	}
 
 	mergedSpecs := append(manifest.Images, newSpecs...)
 	if err := r.writeManifest(outputDir, mergedSpecs); err != nil {

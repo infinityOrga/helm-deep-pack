@@ -67,6 +67,30 @@ func TestGeneratePushManifestRejectsMissingDigest(t *testing.T) {
 	}
 }
 
+func TestGeneratePushManifestPersistsOptionalMetadata(t *testing.T) {
+	data, err := GeneratePushManifest([]ArchiveSpec{{
+		Image:         "quay.io/example/metrics:v1",
+		Target:        "example/metrics:v1",
+		OCIDigest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Optional:      true,
+		OptionalFlags: []string{".Values.metrics.enabled"},
+	}})
+	if err != nil {
+		t.Fatalf("GeneratePushManifest() error = %v", err)
+	}
+
+	var manifest PushManifest
+	if err := json.Unmarshal([]byte(data), &manifest); err != nil {
+		t.Fatalf("GeneratePushManifest() returned invalid JSON: %v", err)
+	}
+	if !manifest.Images[0].Optional {
+		t.Fatal("optional metadata was not persisted")
+	}
+	if len(manifest.Images[0].OptionalFlags) != 1 || manifest.Images[0].OptionalFlags[0] != ".Values.metrics.enabled" {
+		t.Fatalf("optional flags = %v, want Helm values path", manifest.Images[0].OptionalFlags)
+	}
+}
+
 func TestWritePushManifestWritesManifestFile(t *testing.T) {
 	dir := t.TempDir()
 	specs := []ArchiveSpec{{

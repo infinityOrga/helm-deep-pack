@@ -11,9 +11,11 @@ import (
 )
 
 type ArchiveSpec struct {
-	Image     string `json:"image"`
-	Target    string `json:"target"`
-	OCIDigest string `json:"ociDigest"`
+	Image         string   `json:"image"`
+	Target        string   `json:"target"`
+	OCIDigest     string   `json:"ociDigest"`
+	Optional      bool     `json:"optional,omitempty"`
+	OptionalFlags []string `json:"optionalFlags,omitempty"`
 }
 
 type PushManifest struct {

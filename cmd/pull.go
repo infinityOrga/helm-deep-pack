@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -14,16 +15,18 @@ import (
 )
 
 var (
-	pullChart        string
-	pullRepo         string
-	pullVersion      string
-	pullOutputDir    string
-	pullConcurrency  int
-	pullValuesFiles  []string
-	pullSetValues    []string
-	pullAllowHTTP    bool
-	pullVerbose      bool
-	pullDestPlatform string
+	pullChart                string
+	pullRepo                 string
+	pullVersion              string
+	pullOutputDir            string
+	pullConcurrency          int
+	pullValuesFiles          []string
+	pullSetValues            []string
+	pullAllowHTTP            bool
+	pullVerbose              bool
+	pullDestPlatform         string
+	pullRenderedOnly         bool
+	pullOptionalImageTimeout time.Duration
 )
 
 var pullRun = pull.Run
@@ -69,6 +72,9 @@ var pullCmd = &cobra.Command{
 		if err := validation.ValidateConcurrency("--concurrency", pullConcurrency); err != nil {
 			return err
 		}
+		if pullOptionalImageTimeout < 0 {
+			return fmt.Errorf("--optional-image-timeout must not be negative")
+		}
 		if pullDestPlatform != "" {
 			if err := validation.ValidateDestinationPlatform("--destination-platform", pullDestPlatform); err != nil {
 				return err
@@ -98,15 +104,17 @@ var pullCmd = &cobra.Command{
 		)
 
 		return pullRun(cmd.Context(), pull.Options{
-			Chart:               pullChart,
-			Repo:                pullRepo,
-			Version:             pullVersion,
-			OutputDir:           pullOutputDir,
-			Concurrency:         pullConcurrency,
-			ValuesFiles:         pullValuesFiles,
-			SetValues:           pullSetValues,
-			DestinationPlatform: pullDestPlatform,
-			HelperVersion:       Version(),
+			Chart:                pullChart,
+			Repo:                 pullRepo,
+			Version:              pullVersion,
+			OutputDir:            pullOutputDir,
+			Concurrency:          pullConcurrency,
+			ValuesFiles:          pullValuesFiles,
+			SetValues:            pullSetValues,
+			DestinationPlatform:  pullDestPlatform,
+			HelperVersion:        Version(),
+			RenderedOnly:         pullRenderedOnly,
+			OptionalImageTimeout: pullOptionalImageTimeout,
 		}, cmd.ErrOrStderr())
 	},
 }
@@ -121,6 +129,8 @@ func init() {
 	pullCmd.Flags().StringVar(&pullDestPlatform, "destination-platform", "", "Destination platform for staged push helper (os/arch, e.g. windows/amd64); defaults to current platform")
 	pullCmd.Flags().BoolVarP(&pullAllowHTTP, "allow-insecure-http", "k", false, "Allow plaintext HTTP for Helm repository URLs")
 	pullCmd.Flags().BoolVarP(&pullVerbose, "verbose", "V", false, "Enable verbose logging")
+	pullCmd.Flags().BoolVar(&pullRenderedOnly, "rendered-only", false, "Only stage images from the selected render and chart annotations")
+	pullCmd.Flags().DurationVar(&pullOptionalImageTimeout, "optional-image-timeout", pull.DefaultOptionalImageTimeout, "Time budget for best-effort optional image flag attribution (0 disables attribution)")
 }
 
 func resolveEffectiveDestination(configured string) string {

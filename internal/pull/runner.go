@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	helmchart "helm.sh/helm/v3/pkg/chart"
 
@@ -27,16 +28,20 @@ import (
 )
 
 type Options struct {
-	Chart               string
-	Repo                string
-	Version             string
-	OutputDir           string
-	Concurrency         int
-	ValuesFiles         []string
-	SetValues           []string
-	DestinationPlatform string
-	HelperVersion       string
+	Chart                string
+	Repo                 string
+	Version              string
+	OutputDir            string
+	Concurrency          int
+	ValuesFiles          []string
+	SetValues            []string
+	DestinationPlatform  string
+	HelperVersion        string
+	RenderedOnly         bool
+	OptionalImageTimeout time.Duration
 }
+
+const DefaultOptionalImageTimeout = 15 * time.Second
 
 type PullResult struct {
 	OutputDir    string
@@ -63,18 +68,21 @@ type loadedChart struct {
 type chartSourceAdapter func(ctx context.Context, opts Options) (loadedChart, error)
 
 type Runner struct {
-	searchRepoVersions func(ctx context.Context, repo, chart string) ([]searchResult, error)
-	renderManifest     func(r Runner, ctx context.Context, opts Options) (string, error)
-	extractChartImages func(ctx context.Context, opts Options) ([]string, error)
-	extractImages      func(manifest string) ([]string, error)
-	archiveImages      func(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, error)
-	writePushManifest  func(outputDir string, specs []pushspec.ArchiveSpec) error
-	stageChartArchive  func(loaded loadedChart, outputDir string) (string, error)
-	stagePushBinary    func(ctx context.Context, outputDir, destinationPlatform, helperVersion string) (string, error)
-	localChartSource   chartSourceAdapter
-	helmChartSource    chartSourceAdapter
-	ociChartSource     chartSourceAdapter
-	chartCache         *loadedCharts
+	searchRepoVersions     func(ctx context.Context, repo, chart string) ([]searchResult, error)
+	renderManifest         func(r Runner, ctx context.Context, opts Options) (string, error)
+	renderManifestValues   func(r Runner, ctx context.Context, opts Options, values map[string]interface{}) (string, error)
+	extractChartImages     func(ctx context.Context, opts Options) ([]string, error)
+	extractImages          func(manifest string) ([]string, error)
+	discoverOptionalImages func(ctx context.Context, opts Options, baseline []string) (optionalImageDiscovery, error)
+	archiveImages          func(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, error)
+	archiveOptionalImages  func(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, []push.ArchiveFailure, error)
+	writePushManifest      func(outputDir string, specs []pushspec.ArchiveSpec) error
+	stageChartArchive      func(loaded loadedChart, outputDir string) (string, error)
+	stagePushBinary        func(ctx context.Context, outputDir, destinationPlatform, helperVersion string) (string, error)
+	localChartSource       chartSourceAdapter
+	helmChartSource        chartSourceAdapter
+	ociChartSource         chartSourceAdapter
+	chartCache             *loadedCharts
 }
 
 type loadedCharts struct {
@@ -92,12 +100,19 @@ func NewRunner() Runner {
 		renderManifest: func(r Runner, ctx context.Context, opts Options) (string, error) {
 			return r.renderChartManifest(ctx, opts)
 		},
-		extractImages:     chartimages.ExtractImages,
-		archiveImages:     push.ArchiveImages,
-		writePushManifest: pushspec.WritePushManifest,
-		stageChartArchive: stageChartArchive,
-		stagePushBinary:   pushbin.StageForPlatform,
-		chartCache:        &loadedCharts{byOpts: make(map[string]*loadedChart)},
+		renderManifestValues: func(r Runner, ctx context.Context, opts Options, values map[string]interface{}) (string, error) {
+			return r.renderChartManifestWithValues(ctx, opts, values)
+		},
+		extractImages:         chartimages.ExtractImages,
+		archiveImages:         push.ArchiveImages,
+		archiveOptionalImages: push.ArchiveImagesBestEffort,
+		writePushManifest:     pushspec.WritePushManifest,
+		stageChartArchive:     stageChartArchive,
+		stagePushBinary:       pushbin.StageForPlatform,
+		chartCache:            &loadedCharts{byOpts: make(map[string]*loadedChart)},
+	}
+	r.discoverOptionalImages = func(ctx context.Context, opts Options, baseline []string) (optionalImageDiscovery, error) {
+		return r.discoverOptionalChartImages(ctx, opts, baseline)
 	}
 	r.extractChartImages = func(ctx context.Context, opts Options) ([]string, error) {
 		return r.extractChartAnnotationImages(ctx, opts)

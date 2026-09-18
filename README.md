@@ -62,13 +62,16 @@ helm-deep-pack upgrade --version 1.2.3 --yes
 ## Pull command
 
 ```bash
-helm-deep-pack pull CHART [--repo REPO] [--version VERSION] [--output-dir DIR] [--concurrency N] [--values FILE]... [--set KEY=VALUE]... [--destination-platform OS/ARCH] [--allow-insecure-http]
+helm-deep-pack pull CHART [--repo REPO] [--version VERSION] [--output-dir DIR] [--concurrency N] [--values FILE]... [--set KEY=VALUE]... [--destination-platform OS/ARCH] [--rendered-only] [--optional-image-timeout DURATION] [--allow-insecure-http]
 ```
 
 - `CHART` can be a chart name, local chart path, or `oci://...` reference.
 - `--repo` is HTTPS by default; use `--allow-insecure-http` only for intentionally plain-HTTP chart repositories.
 - Use `--values`/`-f` and `--set` to render deployment-specific variants that expose optional image references.
-- The tool extracts images from the rendered manifests you request; it does not enumerate every possible template permutation automatically.
+- By default, `pull` renders the requested values and then performs a best-effort inventory render with every effective boolean value enabled. The bundle contains the union of those renders; this is a discoverable union, not an exhaustive enumeration of arbitrary Helm value permutations.
+- Images found only by the inventory render or chart annotations are marked `[optional]` in the interactive push picker and are unselected by default. Known Helm value paths are shown when attribution finishes within the timeout. Required images remain selected only when the operator chooses them, as before.
+- `--rendered-only` opts out of synthetic discovery while preserving chart-level image annotation extraction. `--optional-image-timeout` controls best-effort flag attribution and defaults to `15s`; use `0` to keep synthetic discovery but skip attribution probes.
+- Synthetic discovery and optional-image archive failures are warnings. If an optional image is missing from the bundle, use `add IMAGE...` to stage it explicitly. Required image archive failures remain fatal.
 - `--destination-platform` controls which platform helper binary is staged into the bundle (`os/arch`, for example `windows/amd64`). If omitted, it defaults to the current host platform.
 - `windows/amd64` is the recommended destination target. `pull` prints a warning whenever the effective destination is not `windows/amd64`, including how to fix it.
 - `pull` downloads the destination `push_images` helper from GitHub release assets and verifies it against `checksums.txt`; network access is required at pull time.
@@ -91,6 +94,7 @@ helm-deep-pack add IMAGE... [--output-dir DIR] [--concurrency N] [--verbose]
 
 - Adds extra container images to an **existing** pull output directory (run `pull` first).
   It appends them into the OCI layout and updates `push_images.json`.
+- Images added explicitly are treated as required images.
 - `IMAGE...` are one or more image references, e.g. `nginx:1.27` or `redis@sha256:...`.
 - `--output-dir` defaults to the current directory; point it at the dir created by `pull`.
 - Images already present are skipped; only new images are fetched and staged.
@@ -117,6 +121,8 @@ helm-deep-pack push [REGISTRY] [--input-dir DIR] [--concurrency N] [--all] [--al
   in non-interactive contexts it still errors and points to `--allow-insecure-http`.
 
 When run in a terminal, `push` is interactive by default so you can choose which images to mirror.
+
+Optional rows include their known Helm value paths and start unchecked. Use the `a`/`--all` behavior when you want to push every staged image, including optional images.
 
 Use `--all` for non-interactive environments (for example CI):
 

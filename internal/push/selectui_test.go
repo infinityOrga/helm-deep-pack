@@ -211,6 +211,33 @@ func TestSelectModelRender(t *testing.T) {
 	}
 }
 
+func TestSelectModelRenderMarksOptionalImagesAndLeavesThemUnchecked(t *testing.T) {
+	model := newSelectModel([]classifiedImage{
+		newClassifiedImageForTest(pushspec.ArchiveSpec{
+			Image:         "quay.io/example/metrics:v1",
+			Target:        "example/metrics:v1",
+			Optional:      true,
+			OptionalFlags: []string{".Values.metrics.enabled"},
+		}, statusPushable),
+	}, 10, "")
+
+	lines := model.render()
+	if model.selectedCount() != 0 {
+		t.Fatalf("optional image was selected by default: %v", model.selectedSpecs())
+	}
+	if !strings.Contains(lines[1], "[optional]") || !strings.Contains(lines[1], ".Values.metrics.enabled") {
+		t.Fatalf("optional row = %q, want optional marker and flag path", lines[1])
+	}
+	if !strings.Contains(lines[1], "◯ ") {
+		t.Fatalf("optional row = %q, want unchecked row", lines[1])
+	}
+
+	model.toggleAll()
+	if model.selectedCount() != 1 {
+		t.Fatalf("toggleAll() selectedCount() = %d, want 1", model.selectedCount())
+	}
+}
+
 func TestReadKey(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -30,13 +30,51 @@ var appendLayoutImage = func(path layout.Path, img v1.Image) error {
 }
 
 func ArchiveImages(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, error) {
+	specs, _, err := archiveImages(ctx, images, outputDir, concurrency, false, status...)
+	return specs, err
+}
+
+type ArchiveFailure struct {
+	Image string
+	Err   error
+}
+
+func (f ArchiveFailure) Error() string {
+	return fmt.Sprintf("archive %s: %v", f.Image, f.Err)
+}
+
+// ArchiveImagesBestEffort archives every valid image it can fetch and returns
+// per-image failures separately. Setup failures (for example, an unusable OCI
+// layout) are returned as the function error.
+func ArchiveImagesBestEffort(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
+	return archiveImages(ctx, images, outputDir, concurrency, true, status...)
+}
+
+func archiveImages(ctx context.Context, images []string, outputDir string, concurrency int, bestEffort bool, status ...io.Writer) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create output dir: %w", err)
+		return nil, nil, fmt.Errorf("create output dir: %w", err)
 	}
 
-	specs, err := pushspec.BuildSpecs(images)
-	if err != nil {
-		return nil, fmt.Errorf("build archive specs: %w", err)
+	specs := make([]pushspec.ArchiveSpec, 0, len(images))
+	failures := make([]ArchiveFailure, 0)
+	if bestEffort {
+		for _, image := range images {
+			built, err := pushspec.BuildSpecs([]string{image})
+			if err != nil {
+				failures = append(failures, ArchiveFailure{Image: image, Err: fmt.Errorf("build archive spec: %w", err)})
+				continue
+			}
+			specs = append(specs, built[0])
+		}
+	} else {
+		var err error
+		specs, err = pushspec.BuildSpecs(images)
+		if err != nil {
+			return nil, nil, fmt.Errorf("build archive specs: %w", err)
+		}
+	}
+	if len(specs) == 0 {
+		return nil, failures, nil
 	}
 	progressTracker := progress.New(progress.StatusWriter(status...), "pulling", len(specs))
 	defer progressTracker.Finish()
@@ -44,13 +82,14 @@ func ArchiveImages(ctx context.Context, images []string, outputDir string, concu
 	layoutRoot := filepath.Join(outputDir, pushspec.OCILayoutDirName())
 	layoutPath, createdLayout, err := openOrCreateLayout(layoutRoot)
 	if err != nil {
-		return nil, fmt.Errorf("open or create oci layout: %w", err)
+		return nil, nil, fmt.Errorf("open or create oci layout: %w", err)
 	}
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(normalizeConcurrency(concurrency))
 
 	var writeMu sync.Mutex
+	var failureMu sync.Mutex
 	for i := range specs {
 		i := i
 		group.Go(func() error {
@@ -59,6 +98,12 @@ func ArchiveImages(ctx context.Context, images []string, outputDir string, concu
 
 			digest, copyErr := copyImageToLayoutUsingGoContainerRegistry(groupCtx, specs[i].Image, layoutPath, &writeMu, progressTracker)
 			if copyErr != nil {
+				if bestEffort {
+					failureMu.Lock()
+					failures = append(failures, ArchiveFailure{Image: specs[i].Image, Err: copyErr})
+					failureMu.Unlock()
+					return nil
+				}
 				return fmt.Errorf("archive %s: %w", specs[i].Image, copyErr)
 			}
 			specs[i].OCIDigest = digest
@@ -70,10 +115,27 @@ func ArchiveImages(ctx context.Context, images []string, outputDir string, concu
 		if createdLayout {
 			_ = os.RemoveAll(layoutRoot)
 		}
-		return nil, fmt.Errorf("archive images: %w", err)
+		return nil, nil, fmt.Errorf("archive images: %w", err)
 	}
 
-	return specs, nil
+	if len(failures) > 0 {
+		successful := make([]pushspec.ArchiveSpec, 0, len(specs)-len(failures))
+		failed := make(map[string]struct{}, len(failures))
+		for _, failure := range failures {
+			failed[failure.Image] = struct{}{}
+		}
+		for _, spec := range specs {
+			if _, ok := failed[spec.Image]; !ok {
+				successful = append(successful, spec)
+			}
+		}
+		specs = successful
+	}
+	if len(specs) == 0 && createdLayout {
+		_ = os.RemoveAll(layoutRoot)
+	}
+
+	return specs, failures, nil
 }
 
 func openOrCreateLayout(layoutRoot string) (layout.Path, bool, error) {

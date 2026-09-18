@@ -3,9 +3,11 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -207,6 +209,8 @@ func resetCmdVars(cmdName string) {
 		pullDestPlatform = ""
 		pullAllowHTTP = false
 		pullVerbose = false
+		pullRenderedOnly = false
+		pullOptionalImageTimeout = pull.DefaultOptionalImageTimeout
 	case "add":
 		addImages = nil
 		addOutputDir = ""
@@ -227,6 +231,21 @@ func resetCmdVars(cmdName string) {
 	default:
 		panic("resetCmdVars: unknown command " + cmdName)
 	}
+}
+
+func validConcurrencyValues() []string {
+	max := runtime.NumCPU() * 4
+	if max > 256 {
+		max = 256
+	}
+
+	values := []string{"1"}
+	for _, value := range []int{4, 8, 16} {
+		if value <= max {
+			values = append(values, fmt.Sprintf("%d", value))
+		}
+	}
+	return values
 }
 
 func CleanupChartDirs() {

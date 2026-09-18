@@ -224,6 +224,7 @@ func TestRunnerRunIncludesChartAnnotationImagesBeforeManifestImages(t *testing.T
 	h := newRunnerTestHarness(t)
 
 	var archiveCalls [][]string
+	var optionalArchiveCalls [][]string
 	h.runner.localChartSource = func(_ context.Context, opts Options) (loadedChart, error) {
 		return testLoadedChart("example", "0.1.0", opts.Chart), nil
 	}
@@ -241,17 +242,12 @@ func TestRunnerRunIncludesChartAnnotationImagesBeforeManifestImages(t *testing.T
 	}
 	h.runner.archiveImages = func(_ context.Context, images []string, outputDir string, concurrency int, _ ...io.Writer) ([]pushspec.ArchiveSpec, error) {
 		archiveCalls = append(archiveCalls, append([]string{}, images...))
-		if reflect.DeepEqual(images, []string{"quay.io/example/from-annotation:v2", "busybox:1.36", "quay.io/example/app:v1"}) {
+		if reflect.DeepEqual(images, []string{"quay.io/example/from-annotation:v2", "quay.io/example/app:v1"}) {
 			return []pushspec.ArchiveSpec{
 				{
 					Image:     "quay.io/example/from-annotation:v2",
 					Target:    "example/from-annotation:v2",
 					OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				},
-				{
-					Image:     "busybox:1.36",
-					Target:    "library/busybox:1.36",
-					OCIDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 				},
 				{
 					Image:     "quay.io/example/app:v1",
@@ -262,6 +258,17 @@ func TestRunnerRunIncludesChartAnnotationImagesBeforeManifestImages(t *testing.T
 		}
 		t.Fatalf("unexpected archive images: %v", images)
 		return nil, nil
+	}
+	h.runner.archiveOptionalImages = func(_ context.Context, images []string, _ string, _ int, _ ...io.Writer) ([]pushspec.ArchiveSpec, []push.ArchiveFailure, error) {
+		optionalArchiveCalls = append(optionalArchiveCalls, append([]string{}, images...))
+		if !reflect.DeepEqual(images, []string{"busybox:1.36"}) {
+			t.Fatalf("unexpected optional archive images: %v", images)
+		}
+		return []pushspec.ArchiveSpec{{
+			Image:     "busybox:1.36",
+			Target:    "library/busybox:1.36",
+			OCIDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		}}, nil, nil
 	}
 	h.runner.writePushManifest = func(outputDir string, specs []pushspec.ArchiveSpec) error {
 		return os.WriteFile(filepath.Join(outputDir, pushspec.PushManifestFileName()), []byte("{\n  \"images\": []\n}\n"), 0o644)
@@ -297,18 +304,21 @@ metadata:
 	}
 
 	if err := h.runner.Run(context.Background(), Options{
-		Chart:       chartDir,
-		OutputDir:   filepath.Join(dir, "out"),
-		Concurrency: 2,
+		Chart:        chartDir,
+		OutputDir:    filepath.Join(dir, "out"),
+		Concurrency:  2,
+		RenderedOnly: true,
 	}); err != nil {
 		t.Fatalf("Runner.Run() error = %v", err)
 	}
 
-	wantCalls := [][]string{
-		{"quay.io/example/from-annotation:v2", "busybox:1.36", "quay.io/example/app:v1"},
-	}
+	wantCalls := [][]string{{"quay.io/example/from-annotation:v2", "quay.io/example/app:v1"}}
 	if !reflect.DeepEqual(archiveCalls, wantCalls) {
 		t.Fatalf("Runner.Run() archive calls = %v, want %v", archiveCalls, wantCalls)
+	}
+	wantOptionalCalls := [][]string{{"busybox:1.36"}}
+	if !reflect.DeepEqual(optionalArchiveCalls, wantOptionalCalls) {
+		t.Fatalf("Runner.Run() optional archive calls = %v, want %v", optionalArchiveCalls, wantOptionalCalls)
 	}
 }
 
@@ -504,6 +514,52 @@ spec:
 	}
 	if !strings.Contains(got, "quay.io/example/app:v1") {
 		t.Fatalf("renderChartManifest() = %q, want rendered image", got)
+	}
+}
+
+func TestCloneChartPreservesDependencyTreeWithoutSharingMutableMetadata(t *testing.T) {
+	dependency := &helmchart.Chart{
+		Metadata: &helmchart.Metadata{
+			APIVersion: "v2",
+			Name:       "child",
+			Version:    "0.1.0",
+		},
+	}
+	root := &helmchart.Chart{
+		Metadata: &helmchart.Metadata{
+			APIVersion: "v2",
+			Name:       "root",
+			Version:    "0.1.0",
+			Dependencies: []*helmchart.Dependency{{
+				Name:      "child",
+				Condition: "child.enabled",
+				Enabled:   true,
+			}},
+		},
+		Values: map[string]interface{}{
+			"child": map[string]interface{}{"enabled": true},
+		},
+	}
+	root.AddDependency(dependency)
+
+	cloned, err := cloneChart(root)
+	if err != nil {
+		t.Fatalf("cloneChart() error = %v", err)
+	}
+	if len(cloned.Dependencies()) != 1 {
+		t.Fatalf("cloneChart() dependencies = %d, want 1", len(cloned.Dependencies()))
+	}
+	if cloned.Dependencies()[0].Parent() != cloned {
+		t.Fatal("cloneChart() dependency parent does not point at clone")
+	}
+	if cloned.Metadata.Dependencies[0] == root.Metadata.Dependencies[0] {
+		t.Fatal("cloneChart() shared dependency metadata")
+	}
+
+	cloned.Metadata.Dependencies[0].Enabled = false
+	cloned.Dependencies()[0].Metadata.Name = "changed"
+	if !root.Metadata.Dependencies[0].Enabled || root.Dependencies()[0].Metadata.Name != "child" {
+		t.Fatalf("cloneChart() mutation changed source chart: %#v / %#v", root.Metadata.Dependencies[0], root.Dependencies()[0].Metadata)
 	}
 }
 

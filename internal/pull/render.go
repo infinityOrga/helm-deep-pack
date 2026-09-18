@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 
+	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/engine"
 	"helm.sh/helm/v3/pkg/releaseutil"
@@ -18,9 +19,24 @@ func (r Runner) renderChartManifest(ctx context.Context, opts Options) (string, 
 	if err != nil {
 		return "", err
 	}
-	chrt := loaded.Chart
 
 	userValues, err := renderUserValues(opts)
+	if err != nil {
+		return "", err
+	}
+	return renderChartManifestWithValues(loaded.Chart, userValues)
+}
+
+func (r Runner) renderChartManifestWithValues(ctx context.Context, opts Options, userValues map[string]interface{}) (string, error) {
+	loaded, err := r.loadChart(ctx, opts)
+	if err != nil {
+		return "", err
+	}
+	return renderChartManifestWithValues(loaded.Chart, userValues)
+}
+
+func renderChartManifestWithValues(source *helmchart.Chart, userValues map[string]interface{}) (string, error) {
+	chrt, err := cloneChart(source)
 	if err != nil {
 		return "", err
 	}
@@ -72,6 +88,77 @@ func (r Runner) renderChartManifest(ctx context.Context, opts Options) (string, 
 		fmt.Fprintf(&out, "---\n# Source: %s\n%s\n", manifest.Name, manifest.Content)
 	}
 	return out.String(), nil
+}
+
+func cloneChart(source *helmchart.Chart) (*helmchart.Chart, error) {
+	if source == nil {
+		return nil, fmt.Errorf("clone chart: chart is nil")
+	}
+
+	// Chart's render inputs (templates, raw files, values, and schema) are
+	// immutable during Helm rendering. The dependency state is different:
+	// ProcessDependenciesWithMerge mutates dependency metadata and the
+	// dependency tree, so clone that small mutable portion explicitly instead
+	// of deep-copying every chart file and byte slice.
+	cloned := *source
+	cloned.Metadata = cloneChartMetadata(source.Metadata)
+
+	// Chart keeps its dependency tree and parent pointer in unexported fields,
+	// so a shallow copy does not preserve them. Rebuild that tree through
+	// Helm's public API; rendering a clone without dependencies silently loses
+	// subchart templates and can also make root templates fail on .Subcharts.
+	dependencies := source.Dependencies()
+	if len(dependencies) == 0 {
+		return &cloned, nil
+	}
+	clonedDependencies := make([]*helmchart.Chart, len(dependencies))
+	for index, dependency := range dependencies {
+		clonedDependency, err := cloneChart(dependency)
+		if err != nil {
+			return nil, err
+		}
+		clonedDependencies[index] = clonedDependency
+	}
+	cloned.SetDependencies(clonedDependencies...)
+	return &cloned, nil
+}
+
+func cloneChartMetadata(source *helmchart.Metadata) *helmchart.Metadata {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	cloned.Sources = append([]string(nil), source.Sources...)
+	cloned.Keywords = append([]string(nil), source.Keywords...)
+	if len(source.Maintainers) > 0 {
+		cloned.Maintainers = make([]*helmchart.Maintainer, len(source.Maintainers))
+		for index, maintainer := range source.Maintainers {
+			if maintainer == nil {
+				continue
+			}
+			maintainerCopy := *maintainer
+			cloned.Maintainers[index] = &maintainerCopy
+		}
+	}
+	if source.Annotations != nil {
+		cloned.Annotations = make(map[string]string, len(source.Annotations))
+		for key, value := range source.Annotations {
+			cloned.Annotations[key] = value
+		}
+	}
+	if len(source.Dependencies) > 0 {
+		cloned.Dependencies = make([]*helmchart.Dependency, len(source.Dependencies))
+		for index, dependency := range source.Dependencies {
+			if dependency == nil {
+				continue
+			}
+			dependencyCopy := *dependency
+			dependencyCopy.Tags = append([]string(nil), dependency.Tags...)
+			dependencyCopy.ImportValues = append([]interface{}(nil), dependency.ImportValues...)
+			cloned.Dependencies[index] = &dependencyCopy
+		}
+	}
+	return &cloned
 }
 
 func renderUserValues(opts Options) (map[string]interface{}, error) {
