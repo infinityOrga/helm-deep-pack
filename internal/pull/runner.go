@@ -97,7 +97,6 @@ func Run(ctx context.Context, opts Options, status ...io.Writer) error {
 }
 
 func NewRunner() Runner {
-	lintRenderer := &helmLintRenderer{}
 	r := Runner{
 		searchRepoVersions: helmSearchRepoVersions,
 		renderManifest: func(r Runner, ctx context.Context, opts Options) (string, error) {
@@ -106,7 +105,7 @@ func NewRunner() Runner {
 		renderManifestValues: func(r Runner, ctx context.Context, opts Options, values map[string]interface{}) (string, error) {
 			return r.renderChartManifestWithValuesForDiscovery(ctx, opts, values)
 		},
-		lintRender:            lintRenderer.Render,
+		lintRender:            renderWithLintMode,
 		extractImages:         chartimages.ExtractImages,
 		archiveImages:         push.ArchiveImages,
 		archiveOptionalImages: push.ArchiveImagesBestEffort,

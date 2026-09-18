@@ -104,17 +104,18 @@ func (r Runner) renderLoadedChartManifest(source *helmchart.Chart, userValues ma
 	return manifest, nil
 }
 
-type helmLintRenderer struct {
-	mu sync.Mutex
-}
+// Helm's engine writes lint diagnostics through the process-wide standard
+// logger and does not expose a logger dependency. Keep that SDK boundary
+// serialized for every runner while leaving the renderer injectable on Runner.
+var helmLintRenderMu sync.Mutex
 
-func (r *helmLintRenderer) Render(chrt *helmchart.Chart, renderValues chartutil.Values) (map[string]string, []string, error) {
+func renderWithLintMode(chrt *helmchart.Chart, renderValues chartutil.Values) (map[string]string, []string, error) {
 	// Helm's engine uses the process-wide standard logger for lint diagnostics
 	// and does not expose a writer or logger dependency. Serialize the brief
-	// redirection for this runner and keep this SDK limitation behind the
+	// redirection for every runner and keep this SDK limitation behind the
 	// injectable lintRender collaborator.
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	helmLintRenderMu.Lock()
+	defer helmLintRenderMu.Unlock()
 
 	previousWriter := log.Writer()
 	var lintLog bytes.Buffer

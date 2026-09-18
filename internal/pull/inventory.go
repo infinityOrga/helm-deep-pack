@@ -130,13 +130,29 @@ func cloneValues(values map[string]interface{}) (map[string]interface{}, error) 
 
 func collectFalseBooleanPaths(values interface{}) []valuePath {
 	var paths []valuePath
-	walkValueTree(values, nil, func(value interface{}, path valuePath) (interface{}, bool) {
-		flag, ok := value.(bool)
-		if ok && !flag && len(path) > 0 && path[len(path)-1].isKey {
+	var collect func(value interface{}, path valuePath)
+	collect = func(value interface{}, path valuePath) {
+		if flag, ok := value.(bool); ok && !flag && len(path) > 0 && path[len(path)-1].isKey {
 			paths = append(paths, path)
 		}
-		return value, false
-	})
+
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			keys := make([]string, 0, len(typed))
+			for key := range typed {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				collect(typed[key], appendPathKey(path, key))
+			}
+		case []interface{}:
+			for index, child := range typed {
+				collect(child, appendPathIndex(path, index))
+			}
+		}
+	}
+	collect(values, nil)
 	return paths
 }
 
@@ -183,29 +199,6 @@ func setValuePath(values map[string]interface{}, path valuePath) {
 			return
 		}
 	}
-}
-
-func walkValueTree(value interface{}, path valuePath, visit func(value interface{}, path valuePath) (interface{}, bool)) interface{} {
-	if replacement, replace := visit(value, path); replace {
-		value = replacement
-	}
-
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			typed[key] = walkValueTree(typed[key], appendPathKey(path, key), visit)
-		}
-	case []interface{}:
-		for index, child := range typed {
-			typed[index] = walkValueTree(child, appendPathIndex(path, index), visit)
-		}
-	}
-	return value
 }
 
 func (r Runner) attributeOptionalImages(
