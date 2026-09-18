@@ -112,7 +112,7 @@ operation; bytes and allocations are per operation.
 | `prometheus-node-exporter` | baseline | 2.938 ms | 1,152,389 | 19,628 |
 | `prometheus-node-exporter` | changed | 2.938 ms | 1,154,793 | 19,638 |
 | `kube-prometheus-stack` | baseline | 143.019 ms | 78,030,679 | 727,437 |
-| `kube-prometheus-stack` | changed | 139.163 ms | 77,436,516 | 704,504 |
+| `kube-prometheus-stack` | changed | 140.682 ms | 77,463,190 | 704,506 |
 | `prometheus` | baseline | 31.459 ms | 13,861,127 | 246,665 |
 | `prometheus` | changed | 29.454 ms | 13,196,585 | 224,230 |
 
@@ -125,7 +125,7 @@ charts.
 | Chart | Time | Bytes/op | Allocs/op | Warm inventory |
 | --- | ---: | ---: | ---: | --- |
 | `prometheus-node-exporter` | 9.324 ms | 3,587,866 | 61,509 | 1 required, 3 optional |
-| `kube-prometheus-stack` | 816.011 ms | 359,623,928 | 3,893,077 | 9 required, 8 optional |
+| `kube-prometheus-stack` | 803.977 ms | 358,886,296 | 3,893,064 | 10 required, 8 optional |
 | `prometheus` | 83.230 ms | 34,428,551 | 610,073 | 6 required, 5 optional |
 
 ### Changed tree: complete default path with attribution
@@ -133,7 +133,7 @@ charts.
 | Chart | Time | Bytes/op | Allocs/op | Attribution result |
 | --- | ---: | ---: | ---: | --- |
 | `prometheus-node-exporter` | 45.121 ms | 17,040,839 | 315,393 | 3 optional, no warnings |
-| `kube-prometheus-stack` | 9,265.402 ms | 4,311,122,048 | 48,230,248 | 8 optional; stopped at 32 probes |
+| `kube-prometheus-stack` | 9,274.929 ms | 4,311,313,592 | 48,230,851 | 8 optional; stopped at 32 probes |
 | `prometheus` | 1,237.841 ms | 533,123,112 | 9,892,343 | 5 optional; stopped at 32 probes |
 
 The large-chart attribution numbers are the important scaling result: the

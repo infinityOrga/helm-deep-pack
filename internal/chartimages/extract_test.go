@@ -64,6 +64,10 @@ spec:
           image: quay.io/example/operator:v1
           args:
             - --executor-image=quay.io/example/executor:v2
+            - --prometheus-config-reloader=quay.io/prometheus-operator/prometheus-config-reloader:v4
+            - --prometheus-config-reloader
+            - quay.io/prometheus-operator/prometheus-config-reloader:v5
+            - --config-reloader-cpu-request=200m
           env:
             - name: STRIMZI_DEFAULT_TOPIC_OPERATOR_IMAGE
               value: quay.io/strimzi/operator-topic:v3
@@ -77,6 +81,8 @@ spec:
 	want := []string{
 		"quay.io/example/operator:v1",
 		"quay.io/example/executor:v2",
+		"quay.io/prometheus-operator/prometheus-config-reloader:v4",
+		"quay.io/prometheus-operator/prometheus-config-reloader:v5",
 		"quay.io/strimzi/operator-topic:v3",
 	}
 	if len(got) != len(want) {

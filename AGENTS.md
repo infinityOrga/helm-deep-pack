@@ -7,164 +7,164 @@ them into an OCI layout, and pushing them to a target registry.
 
 ## Architecture
 
-The codebase is organized as a thin command layer over internal packages grouped by
-the two lifecycle phases the tool supports: **pull** (render + stage) and **push**
-(transfer to a registry).
+The CLI is a thin command layer over independently testable workflow packages. The
+two lifecycle phases are **pull** (render and stage) and **push** (transfer to a
+registry).
 
-**Thin Command Layer** (`cmd/`)
-- Parse flags/args → validate (`PreRunE`) → delegate to an internal package.
-- `cmd/pull.go` — `pull CHART [flags]`: Takes chart as positional argument; builds `pull.Options`
-  and calls `pull.Run()`.
-- `cmd/push.go` — `push REGISTRY [flags]`: Takes registry as positional argument; calls
-  `push.PushImages()` with the registry from `args[0]`.
-- `cmd/add.go` — `add IMAGE... [flags]`: Takes one or more image references as positional
-  args; builds `add.Options` and calls `add.Run()` to stage them into an existing pull dir.
-- `cmd/root.go` wires subcommands and exposes `commandLogger(verbose bool) *slog.Logger`,
-  a small helper that returns a stderr `slog` logger at Debug level when `--verbose`
-  is set, otherwise Info. There is no central Config/DI struct.
+### Command layer (`cmd/`)
 
-**Internal Layer** (`internal/`)
-- `internal/pull/` — Pull workflow: renders Helm charts in-process via the Helm SDK,
-  resolves remote chart versions from `index.yaml`, coordinates image extraction, and
-  orchestrates staging (archives + `push_images.json`) into the output directory.
-  - `runner.go` — public API (`Run`, `Runner`, `NewRunner`, `Options`, `PullResult`).
-  - `pipeline.go`, `render.go`, `chartsource.go`, `repoindex.go` — workflow stages.
-  - `outputdir.go`, `slices.go` — small focused helpers.
-  - `Runner`'s function-field collaborators are deliberate **test seams**: each one is
-    substituted in `runner_test.go` to drive the workflow without Helm/registry/network.
-    Keep them as fields — don't collapse them into direct calls (they are real seams,
-    not hypothetical ones).
-- `internal/add/` — Add workflow: stages user-supplied image references into an
-  existing pull output dir. Reads the existing `push_images.json`, dedupes against
-  it, calls `push.ArchiveImages` to append into the layout, and rewrites the manifest.
-  - `add.go` — public API (`Run`, `Runner`, `NewRunner`, `Options`) with the same
-    function-field test seams as pull. Errors if no manifest exists (augments only).
-- `internal/push/` — Transfer engine: stages images into an OCI layout
-  (`ArchiveImages`) and pushes them to a registry with bounded concurrency
-  (`PushImages`), plus progress reporting and self-binary copy helpers.
-  - `archive.go`, `push.go`, `files.go`, `progress.go`.
-- `internal/pushspec/` — Shared on-disk contract between pull and push: the
-  `push_images.json` manifest model and image-reference derivation.
-  - `manifest.go` — `ArchiveSpec`, `PushManifest`, read/write helpers,
-    `PushManifestFileName`, `OCILayoutDirName`.
-  - `spec.go` — `BuildSpecs` and mirror-reference derivation.
-- `internal/chartimages/` — Extracts image references from rendered manifests.
-  - `extract.go`, `manifest.go`, `annotations.go`, `args.go`, `reference.go`.
-- `internal/validation/` — Reusable validators for flags and inputs.
+Commands parse flags and arguments, validate them in `PreRunE`, then delegate:
 
-Package dependency direction (no cycles): `pull` → `push`, `pushspec`;
-`add` → `push`, `pushspec`; `push` → `pushspec`; `pushspec` → stdlib + go-containerregistry `name`.
+- `cmd/pull.go` — `pull CHART [flags]`; builds `pull.Options` and calls `pull.Run()`.
+- `cmd/push.go` — `push REGISTRY [flags]`; passes `args[0]` to `push.PushImages()`.
+- `cmd/add.go` — `add IMAGE... [flags]`; builds `add.Options` and calls `add.Run()`.
+- `cmd/root.go` — wires commands and provides `commandLogger(verbose bool) *slog.Logger`,
+  a stderr logger at Debug level for `--verbose` and Info otherwise. There is no
+  central Config/DI struct.
 
-## Best Practices & Patterns
+Keep commands thin: parse and validate, then delegate. Workflow logic belongs in
+`internal/`.
 
-### Input Validation
-- **Required validation**: Use Cobra's `MarkFlagRequired()` in cmd files.
-- **Format/constraint validation**: Use validators in `internal/validation/` from `PreRunE`.
-- **Delegate to underlying libraries**: Never use regex; use the actual library validators:
-  - Chart names: `chartutil.ValidateMetadataName()` from the Helm SDK
-  - Release names: `chartutil.ValidateReleaseName()` from the Helm SDK
-  - Namespaces: `validation.IsDNS1123Subdomain()` from Kubernetes apimachinery
-  - URLs: Go's standard `url.Parse()` (`ValidateURL` additionally restricts the scheme
-    to `http`/`https`, matching the `index.yaml`-based repo loading the tool supports).
-- Separation of concerns: Cobra handles "is it provided", validators handle "is it valid".
+### Internal packages (`internal/`)
 
-### Logging
-- Use `commandLogger(verbose)` in `cmd/` for the small amount of structured logging
-  the CLI emits. It returns a stderr `slog.Logger`. Keep logging at command boundaries.
-- Never log secrets.
+- `pull/` — renders charts with the Helm SDK, resolves remote versions from
+  `index.yaml`, extracts images, and stages archives plus `push_images.json`.
+  `runner.go` exposes `Run`, `Runner`, `NewRunner`, `Options`, and `PullResult`.
+- `add/` — augments an existing pull bundle. It reads `push_images.json`, deduplicates
+  images, archives additions, and rewrites the manifest. It errors when no manifest
+  exists because it is an augmentation workflow.
+- `push/` — archives images into an OCI layout, probes and pushes them with bounded
+  concurrency, reports progress, and provides helper-binary copy functions.
+- `pushspec/` — owns the shared `push_images.json` and OCI-layout contract, including
+  `ArchiveSpec`, `PushManifest`, `BuildSpecs`, and reference derivation.
+- `chartimages/` — extracts image references from rendered manifests and annotations.
+- `validation/` — reusable validators for flags and inputs.
 
-### Import Aliasing
-- Default: do not alias imports; use the package's natural import name.
-- Alias only when required:
-  - package name is invalid/awkward as an identifier (for example `.../v1`),
-  - package name is too generic or conflicts in-file (for example `chart`, `name`),
-  - or there is a true name collision.
-- Avoid cosmetic aliases like `*pkg` suffixes.
+Package dependencies point inward without cycles:
 
-### Status Reporting
-- `pull.Run`, `push.ArchiveImages`, and `push.PushImages` accept optional
-  `io.Writer` status arguments for human-readable progress; keep this pattern.
+```text
+pull  -> push, pushspec
+add   -> push, pushspec
+push  -> pushspec
+pushspec -> stdlib, go-containerregistry/name
+```
 
-### Table-Driven Tests
-- Prefer data-driven test cases for breadth with low boilerplate.
+`pull.Run` accepts a status `io.Writer`, as do `push.ArchiveImages` and
+`push.PushImages`; retain this human-readable progress seam.
 
-## Working Rules
+### Test seams
 
-**Commands**
-- Required arguments use Cobra's `Args: cobra.ExactArgs(N)` and are mapped in `PreRunE`.
-- Optional flags use `MarkFlagRequired()` when required (Cobra handles presence validation).
-- Use `PreRunE()` for format/constraint validation via `internal/validation/`.
-- Keep commands thin: parse/validate → delegate. No workflow logic in commands.
+`pull.Runner` and `add.Runner` deliberately keep function-field collaborators.
+Tests replace these fields to run workflows without Helm, registry, or network
+dependencies. Preserve the fields as seams; replace them only when the workflow
+contract itself changes.
 
-**Internal Packages**
-- Keep the cmd/internal split and the pull/push/pushspec boundaries intact.
-- Put workflow logic in `internal/`; prefer existing helpers over new ones.
-- Each package should stay independently testable. No global state or singletons.
+## Implementation rules
 
-**Error Handling**
-- Return clear, wrapped errors (`fmt.Errorf("...: %w", err)`). Never swallow failures.
+### Commands and validation
 
-**Testing**
-- Add or update tests alongside behavior changes, especially for manifest parsing,
-  archive handling, and registry interactions.
+- Use `cobra.ExactArgs(N)` for required positional arguments.
+- Use Cobra's `MarkFlagRequired()` for required flags; it owns presence checks.
+- Put format and constraint checks in `PreRunE`, using `internal/validation`.
+- Delegate format rules to the underlying library where one exists:
+  - chart names: Helm `chartutil.ValidateMetadataName()`;
+  - release names: Helm `chartutil.ValidateReleaseName()`;
+  - namespaces: Kubernetes `validation.IsDNS1123Subdomain()`;
+  - URLs: Go `url.Parse()` through `ValidateURL`, restricted to HTTP(S) for
+    `index.yaml` repositories.
+- Keep presence validation separate from format validation.
+
+### Internal packages
+
+- Keep the `cmd`/`internal` split and the `pull`/`push`/`pushspec` boundaries.
+- Prefer existing helpers and focused package responsibilities.
+- Keep packages independently testable; isolate mutable process state behind an
+  injected collaborator when an external SDK requires it.
+- Return clear wrapped errors, for example `fmt.Errorf("load chart: %w", err)`.
+- Keep secrets out of logs.
+
+### Logging and imports
+
+- Use `commandLogger(verbose)` for the CLI's small amount of structured logging.
+- Keep command-boundary logging in `cmd/`; use status writers for human-readable
+  workflow progress.
+- Use natural import names. Alias only for an invalid or awkward package name, a
+  genuine name collision, or a package name that is too generic in the file.
+
+## Testing and verification
+
+- Add or update focused unit tests beside behavior changes, especially for manifests,
+  archives, registry interactions, validation, and rendering.
 - Keep unit tests in-package with the `*_test.go` suffix.
+- Prefer table-driven tests when they cover multiple cases without obscuring intent.
+- Format Go changes with `gofmt`.
 
-**Code Changes**
-- Make surgical changes consistent with existing patterns.
-- Preserve the current Cobra flag and command patterns.
+### Static analysis
 
-## cmd/ Testing
+Treat `go vet` and `golangci-lint` as one verification pair. Whenever `go vet` is
+run, run the matching linter command too:
 
-Helpers live in `cmd/shared_test.go`:
-- `ExecuteCommand(cmd, args)` → run a command through `rootCmd`, capture stdout/stderr/err.
-- `AssertFlagExists` / `AssertFlagNotExists` / `AssertFlagType` / `AssertFlagDefault`
-  → verify flag registration and properties.
-- `spyPullRun(retErr)` / `spyPushRun(retErr)` → swap the `pullRun`/`pushRun` seam for a
-  spy that records the mapped `pull.Options` (or `registry/inputDir/concurrency`) and
-  returns `retErr`. Each installer resets the command's global flag vars (`resetCmdVars`)
-  and returns a `restore` func; always `defer restore()`.
-- `combinedErrorText(output)` → lowercased stderr+stdout+err, used to assert an error is
-  attributable to the right flag/validator.
+```sh
+go vet ./...
+golangci-lint run ./...
+```
 
-Test intent by layer:
-- **Arg/flag metadata** (registration, type, default, required status) via the `Assert*` helpers.
-- **Arg/flag→workflow mapping**: drive real `RunE` and assert the args/flags were parsed and
-  passed correctly to the internal layer.
-- **Validation wiring**: invalid inputs assert an error *attributable to the correct
-  arg/flag* (substring check), not the exact wording. Exact message wording is owned by
-  `internal/validation/validation_test.go`.
+Report an unavailable linter as a verification blocker rather than silently
+substituting another check. Keep CI and local verification aligned with this pair.
 
-Note: pflag retains flag values across `Execute` calls on the shared `rootCmd`. Tests
-that mutate flags must reset state via `resetCmdVars()`.
+### Command-layer tests
+
+Helpers in `cmd/shared_test.go` provide:
+
+- `ExecuteCommand(cmd, args)` — executes through `rootCmd` and captures output and
+  errors.
+- `AssertFlagExists`, `AssertFlagNotExists`, `AssertFlagType`, and
+  `AssertFlagDefault` — verify flag metadata.
+- `spyPullRun(retErr)` and `spyPushRun(retErr)` — replace workflow seams and capture
+  mapped options. Each resets global command variables and returns a restore function;
+  defer that restore function.
+- `combinedErrorText(output)` — combines output and error text for attribution checks.
+
+Test command behavior at the appropriate layer:
+
+- flag metadata through the `Assert*` helpers;
+- argument/flag mapping through the real `RunE` with a workflow spy;
+- validation wiring by asserting an error mentions the responsible argument or flag.
+
+`pflag` retains values across executions of the shared `rootCmd`; reset state with
+`resetCmdVars()` whenever a test mutates flags.
 
 ```go
 output := ExecuteCommand(pullCmd, []string{"nginx", "--concurrency", "8"})
 output := ExecuteCommand(pushCmd, []string{"docker.io", "--concurrency", "4"})
 ```
 
-## Commands
+### Standard commands
 
-- `go test ./...` — Run tests
-- `go build ./...` — Build
-- `go vet ./...` — Vet
-- `go run . --help` — Help
-- `go run . pull nginx --verbose` — Pull with verbose logging
-- `go run . add busybox:1.36 -o ./out` — Add images to an existing pull dir
-- `go test ./... -run TestName` — Run a focused test
+```sh
+go test ./...
+go build ./...
+go vet ./...
+golangci-lint run ./...
+go run . --help
+go run . pull nginx --verbose
+go run . add busybox:1.36 -o ./out
+go test ./... -run TestName
+```
 
-## Notes
+A change is ready when its tests and documentation reflect the behavior, Go files
+are formatted, and the full test, build, vet, and golangci-lint checks pass—or any
+environmental blocker is recorded explicitly.
 
-- `pull` loads charts in-process via the Helm SDK, resolves remote versions from
-  `index.yaml` for HTTP(S) repos, supports OCI chart references (`oci://...`) via
-  the Helm registry client, and writes archives plus `push_images.json` into the
-  output directory.
-- `push` reads `push_images.json` from `--input-dir` (or the helper binary directory
-  by default), then pushes images with bounded concurrency.
-- Pull artifacts include a staged helper executable named `push_images` that can be
-  run directly as `./push_images REGISTRY` (no `push` subcommand) from inside the
-  output directory.
-- The on-disk contract (`push_images.json`, OCI layout) lives in `internal/pushspec/`
-  and is shared by both phases.
-- Temporary output is written to the current working directory unless an explicit
-  output directory is provided.
-- `e2e_registry_test.go` (repo root) covers the registry push path end to end.
+## On-disk and runtime contracts
+
+- `pull` loads charts in-process through Helm, supports local, HTTP(S), configured
+  repository, and `oci://` sources, and writes archives plus `push_images.json`.
+- `push` reads `push_images.json` from `--input-dir`, defaulting to the helper's
+  directory when no input directory is provided.
+- Pull bundles contain the OCI layout, `push_images.json`, the chart archive, and a
+  staged `push_images` helper that runs as `./push_images REGISTRY`.
+- `internal/pushspec/` owns the shared manifest and OCI-layout names.
+- Temporary output goes to the current working directory unless an output directory
+  is supplied.
+- `e2e_registry_test.go` covers the registry push path end to end.

@@ -34,7 +34,9 @@ drifting to synonyms.
   arbitrary Helm value permutations. If a chart's synthetic branches trigger
   chart-authored validation, discovery uses Helm lint mode and reports the
   validation messages; malformed YAML is isolated by skipping only the
-  unparseable rendered templates, with a warning.
+  unparseable rendered templates, with a warning. Lint-mode output is
+  inventory-only and is not a deployable manifest; the ordinary requested
+  render remains strict and authoritative.
 - **Optional flag attribution** — Bounded, best-effort render probes that try to
   associate an optional image with the smallest known set of false Helm boolean
   value paths. It is limited by the configured timeout and a 32-render safety

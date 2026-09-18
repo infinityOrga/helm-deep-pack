@@ -19,8 +19,8 @@ func collectArgumentImageCandidates(value, nextValue string, hasNext bool) []str
 			continue
 		}
 		if idx := strings.LastIndex(token, "="); idx >= 0 && idx+1 < len(token) {
-			lhs := strings.ToLower(token[:idx])
-			if strings.Contains(lhs, "image") {
+			lhs := token[:idx]
+			if isImageFlag(lhs) {
 				candidates = append(candidates, token[idx+1:])
 			}
 			continue
@@ -31,7 +31,7 @@ func collectArgumentImageCandidates(value, nextValue string, hasNext bool) []str
 			i++
 			continue
 		}
-		if strings.HasPrefix(token, "--") && strings.Contains(lowerToken, "image") && i+1 < len(tokens) {
+		if strings.HasPrefix(token, "--") && isImageFlag(token) && i+1 < len(tokens) {
 			candidates = appendImageFlagCandidate(candidates, token, tokens[i+1])
 			i++
 			continue
@@ -43,7 +43,7 @@ func collectArgumentImageCandidates(value, nextValue string, hasNext bool) []str
 		lowerToken := strings.ToLower(token)
 		if lowerToken == "--set" || lowerToken == "--set-string" {
 			candidates = append(candidates, collectSetAssignmentCandidates(nextValue)...)
-		} else if strings.HasPrefix(token, "--") && strings.Contains(lowerToken, "image") {
+		} else if strings.HasPrefix(token, "--") && isImageFlag(token) {
 			candidates = appendImageFlagCandidate(candidates, token, nextValue)
 		}
 	}
@@ -73,11 +73,15 @@ func collectSetAssignmentCandidates(value string) []string {
 
 func appendImageFlagCandidate(candidates []string, token, value string) []string {
 	token = strings.TrimSpace(token)
-	if token == "" {
+	if token == "" || !isImageFlag(token) {
 		return candidates
 	}
-	if strings.Contains(strings.ToLower(token), "image") {
-		return append(candidates, strings.TrimSpace(value))
-	}
-	return candidates
+	return append(candidates, strings.TrimSpace(value))
+}
+
+func isImageFlag(token string) bool {
+	token = strings.ToLower(strings.TrimSpace(token))
+	// Prometheus Operator calls its image flag --prometheus-config-reloader,
+	// rather than including the word "image" in the flag name.
+	return strings.Contains(token, "image") || strings.HasSuffix(token, "-config-reloader")
 }
