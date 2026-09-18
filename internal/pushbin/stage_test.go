@@ -159,6 +159,58 @@ func TestLocalHelperBuildEnvironment_UsesCgoTargetToolchain(t *testing.T) {
 	}
 }
 
+func TestLocalHelperCgoToolchain_CrossTargets(t *testing.T) {
+	tests := map[string]struct {
+		goos    string
+		goarch  string
+		wantCC  string
+		wantCXX string
+	}{
+		"darwin amd64": {
+			goos:    "darwin",
+			goarch:  "amd64",
+			wantCC:  "o64-clang",
+			wantCXX: "o64-clang++",
+		},
+		"darwin arm64": {
+			goos:    "darwin",
+			goarch:  "arm64",
+			wantCC:  "oa64-clang",
+			wantCXX: "oa64-clang++",
+		},
+		"linux arm64": {
+			goos:    "linux",
+			goarch:  "arm64",
+			wantCC:  "aarch64-linux-gnu-gcc",
+			wantCXX: "aarch64-linux-gnu-g++",
+		},
+		"windows amd64": {
+			goos:    "windows",
+			goarch:  "amd64",
+			wantCC:  "x86_64-w64-mingw32-gcc",
+			wantCXX: "x86_64-w64-mingw32-g++",
+		},
+		"windows arm64": {
+			goos:    "windows",
+			goarch:  "arm64",
+			wantCC:  "/llvm-mingw/bin/aarch64-w64-mingw32-gcc",
+			wantCXX: "/llvm-mingw/bin/aarch64-w64-mingw32-g++",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if tt.goos == runtime.GOOS && tt.goarch == runtime.GOARCH {
+				t.Skip("native targets use the host cgo toolchain")
+			}
+			gotCC, gotCXX := localHelperCgoToolchain(tt.goos, tt.goarch)
+			if gotCC != tt.wantCC || gotCXX != tt.wantCXX {
+				t.Fatalf("localHelperCgoToolchain() = %q, %q; want %q, %q", gotCC, gotCXX, tt.wantCC, tt.wantCXX)
+			}
+		})
+	}
+}
+
 func TestStageForPlatform_DevFallsBackToReleaseWhenLocalBuildFails(t *testing.T) {
 	restore := stubReleaseFetcher(t, "linux", "amd64", "release-helper")
 	defer restore()

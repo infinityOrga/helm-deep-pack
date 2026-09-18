@@ -75,7 +75,7 @@ helm-deep-pack pull CHART [--repo REPO] [--version VERSION] [--output-dir DIR] [
 - `--destination-platform` controls which platform helper binary is staged into the bundle (`os/arch`, for example `windows/amd64`). If omitted, it defaults to the current host platform.
 - `windows/amd64` is the recommended destination target. `pull` prints a warning whenever the effective destination is not `windows/amd64`, including how to fix it.
 - `pull` downloads the destination `push_images` helper from GitHub release assets and verifies it against `checksums.txt`; network access is required at pull time.
-- In local dev runs (`go run`, version `dev`), `pull` builds `cmd/pushimages` with cgo enabled on demand for the selected destination platform instead of fetching release helper assets. A `linux/arm64` destination requires `aarch64-linux-gnu-gcc` and `aarch64-linux-gnu-g++` in `PATH`; if the local build cannot run, `pull` falls back to release helper assets.
+- In local dev runs (`go run`, version `dev`), `pull` builds `cmd/pushimages` with cgo enabled on demand for the selected destination platform instead of fetching release helper assets. Non-native targets require their matching cgo toolchain: Linux uses `x86_64-linux-gnu-gcc`/`g++` or `aarch64-linux-gnu-gcc`/`g++`, Darwin uses `o64-clang`/`o64-clang++` or `oa64-clang`/`oa64-clang++`, and Windows uses MinGW toolchains. If the local build cannot run, `pull` falls back to release helper assets.
 - Release source defaults are embedded at build time via GoReleaser ldflags. If you fork or transfer the repository, update the build-time values in the release workflow rather than changing runtime config.
 
 Examples:

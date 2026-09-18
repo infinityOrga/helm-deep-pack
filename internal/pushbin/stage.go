@@ -173,11 +173,33 @@ func localHelperBuildEnvironment(baseEnv []string, goos, goarch string) []string
 	env = setEnvironmentValue(env, "CGO_ENABLED", "1")
 	env = setEnvironmentValue(env, "GOOS", goos)
 	env = setEnvironmentValue(env, "GOARCH", goarch)
-	if goos == "linux" && goarch == "arm64" {
-		env = setEnvironmentValue(env, "CC", "aarch64-linux-gnu-gcc")
-		env = setEnvironmentValue(env, "CXX", "aarch64-linux-gnu-g++")
+	if cc, cxx := localHelperCgoToolchain(goos, goarch); cc != "" {
+		env = setEnvironmentValue(env, "CC", cc)
+		env = setEnvironmentValue(env, "CXX", cxx)
 	}
 	return env
+}
+
+func localHelperCgoToolchain(goos, goarch string) (string, string) {
+	if goos == runtime.GOOS && goarch == runtime.GOARCH {
+		return "", ""
+	}
+	switch goos + "/" + goarch {
+	case "darwin/amd64":
+		return "o64-clang", "o64-clang++"
+	case "darwin/arm64":
+		return "oa64-clang", "oa64-clang++"
+	case "linux/amd64":
+		return "x86_64-linux-gnu-gcc", "x86_64-linux-gnu-g++"
+	case "linux/arm64":
+		return "aarch64-linux-gnu-gcc", "aarch64-linux-gnu-g++"
+	case "windows/amd64":
+		return "x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-g++"
+	case "windows/arm64":
+		return "/llvm-mingw/bin/aarch64-w64-mingw32-gcc", "/llvm-mingw/bin/aarch64-w64-mingw32-g++"
+	default:
+		return "", ""
+	}
 }
 
 func setEnvironmentValue(env []string, key, value string) []string {

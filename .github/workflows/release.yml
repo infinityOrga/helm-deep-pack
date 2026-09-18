@@ -23,9 +23,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install Linux arm64 cgo toolchain
-        run: sudo apt-get update && sudo apt-get install --yes gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
       - name: Vet
         run: go vet ./...
 
@@ -35,11 +32,18 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          version: "~> v2"
-          args: release --clean
+      - name: GoReleaser cross build
+        run: |
+          docker run --rm \
+            --env CGO_ENABLED=1 \
+            --env GITHUB_TOKEN \
+            --env RELEASE_OWNER \
+            --env RELEASE_REPO \
+            --env RELEASE_BASE_URL \
+            --volume "${GITHUB_WORKSPACE}:/workspace" \
+            --workdir /workspace \
+            ghcr.io/goreleaser/goreleaser-cross:v1.26.3 \
+            release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_OWNER: ${{ github.repository_owner }}
