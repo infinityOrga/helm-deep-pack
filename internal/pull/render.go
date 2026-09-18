@@ -110,6 +110,12 @@ func (r Runner) renderLoadedChartManifest(source *helmchart.Chart, userValues ma
 var helmLintRenderMu sync.Mutex
 
 func renderWithLintMode(chrt *helmchart.Chart, renderValues chartutil.Values) (map[string]string, []string, error) {
+	return withLintLog(func() (map[string]string, error) {
+		return (engine.Engine{LintMode: true}).Render(chrt, renderValues)
+	})
+}
+
+func withLintLog(render func() (map[string]string, error)) (map[string]string, []string, error) {
 	// Helm's engine uses the process-wide standard logger for lint diagnostics
 	// and does not expose a writer or logger dependency. Serialize the brief
 	// redirection for every runner and keep this SDK limitation behind the
@@ -121,7 +127,7 @@ func renderWithLintMode(chrt *helmchart.Chart, renderValues chartutil.Values) (m
 	var lintLog bytes.Buffer
 	log.SetOutput(&lintLog)
 	defer log.SetOutput(previousWriter)
-	rendered, err := (engine.Engine{LintMode: true}).Render(chrt, renderValues)
+	rendered, err := render()
 	return rendered, parseLintWarnings(lintLog.String()), err
 }
 
