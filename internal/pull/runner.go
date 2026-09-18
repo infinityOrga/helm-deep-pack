@@ -101,7 +101,7 @@ func NewRunner() Runner {
 			return r.renderChartManifest(ctx, opts)
 		},
 		renderManifestValues: func(r Runner, ctx context.Context, opts Options, values map[string]interface{}) (string, error) {
-			return r.renderChartManifestWithValues(ctx, opts, values)
+			return r.renderChartManifestWithValuesForDiscovery(ctx, opts, values)
 		},
 		extractImages:         chartimages.ExtractImages,
 		archiveImages:         push.ArchiveImages,

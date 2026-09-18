@@ -2,6 +2,7 @@ package pull
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -70,15 +71,20 @@ func (r Runner) discoverOptionalChartImages(ctx context.Context, opts Options, b
 	enableValuePaths(optionalValues, falsePaths)
 
 	syntheticManifest, err := r.renderManifestValues(r, ctx, opts, optionalValues)
+	warnings := make([]string, 0)
 	if err != nil {
-		return optionalImageDiscovery{
-			Warnings: []string{fmt.Sprintf("optional image discovery render failed; optional images may be missing (discover or add them explicitly): %v", err)},
-		}, nil
+		var partial *partialRenderError
+		if !errors.As(err, &partial) || strings.TrimSpace(syntheticManifest) == "" {
+			return optionalImageDiscovery{
+				Warnings: []string{fmt.Sprintf("optional image discovery render failed; optional images may be missing (discover or add them explicitly): %v", err)},
+			}, nil
+		}
+		warnings = append(warnings, partial.warnings...)
 	}
 	syntheticImages, err := r.extractImages(syntheticManifest)
 	if err != nil {
 		return optionalImageDiscovery{
-			Warnings: []string{fmt.Sprintf("optional image discovery extraction failed; optional images may be missing (discover or add them explicitly): %v", err)},
+			Warnings: append(warnings, fmt.Sprintf("optional image discovery extraction failed; optional images may be missing (discover or add them explicitly): %v", err)),
 		}, nil
 	}
 
@@ -99,7 +105,7 @@ func (r Runner) discoverOptionalChartImages(ctx context.Context, opts Options, b
 		optional = append(optional, image)
 	}
 
-	discovery := optionalImageDiscovery{Images: optional, OptionalFlags: make(map[string][]string)}
+	discovery := optionalImageDiscovery{Images: optional, OptionalFlags: make(map[string][]string), Warnings: warnings}
 	if len(optional) == 0 || opts.OptionalImageTimeout <= 0 {
 		return discovery, nil
 	}
@@ -205,6 +211,8 @@ func (r Runner) attributeOptionalImages(
 	cache := make(map[string]map[string]struct{})
 	warnings := make([]string, 0)
 	probeFailed := false
+	probeCount := 0
+	probeBudgetExceeded := false
 
 	allKey := valuePathsKey(falsePaths)
 	cache[allKey] = imageSetFromMap(optionalSet)
@@ -217,6 +225,11 @@ func (r Runner) attributeOptionalImages(
 		if images, ok := cache[key]; ok {
 			return images, true
 		}
+		if probeCount >= maxOptionalImageAttributionProbes {
+			probeBudgetExceeded = true
+			return nil, false
+		}
+		probeCount++
 		values, err := cloneValues(baseValues)
 		if err != nil {
 			probeFailed = true
@@ -225,11 +238,15 @@ func (r Runner) attributeOptionalImages(
 		enableValuePaths(values, paths)
 		manifest, err := r.renderManifestValues(r, ctx, opts, values)
 		if err != nil {
-			if ctx.Err() != nil || time.Now().After(deadline) {
+			var partial *partialRenderError
+			if !errors.As(err, &partial) || strings.TrimSpace(manifest) == "" {
+				if ctx.Err() != nil || time.Now().After(deadline) {
+					return nil, false
+				}
+				probeFailed = true
 				return nil, false
 			}
-			probeFailed = true
-			return nil, false
+			warnings = appendUnique(warnings, partial.warnings...)
 		}
 		extracted, err := r.extractImages(manifest)
 		if err != nil {
@@ -265,6 +282,9 @@ func (r Runner) attributeOptionalImages(
 			flagsByImage[image] = appendUnique(flagsByImage[image], path.String())
 			delete(unresolved, image)
 		}
+		if len(unresolved) == 0 {
+			break
+		}
 	}
 
 	for image := range unresolved {
@@ -283,11 +303,19 @@ func (r Runner) attributeOptionalImages(
 	if time.Now().After(deadline) {
 		warnings = append(warnings, fmt.Sprintf("optional image flag attribution exceeded %s; some optional images may not show flag paths", opts.OptionalImageTimeout))
 	}
+	if probeBudgetExceeded {
+		warnings = append(warnings, fmt.Sprintf("optional image flag attribution stopped after %d render probes; some optional images may not show flag paths", maxOptionalImageAttributionProbes))
+	}
 	if probeFailed {
 		warnings = append(warnings, "some optional image flag attribution probes failed; affected images remain marked optional")
 	}
 	return flagsByImage, warnings
 }
+
+// Large charts can have hundreds of false booleans. Keep best-effort
+// attribution from multiplying a full Helm render until the timeout expires;
+// discovery still retains the optional marker when this cap is reached.
+const maxOptionalImageAttributionProbes = 32
 
 func imageSetFromMap(values map[string]struct{}) map[string]struct{} {
 	result := make(map[string]struct{}, len(values))

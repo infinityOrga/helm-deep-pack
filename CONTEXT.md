@@ -31,10 +31,14 @@ drifting to synonyms.
 - **Synthetic inventory render** — A second, inventory-only Helm render that
   enables every effective boolean value while preserving non-boolean values. It
   produces a discoverable union with the normal render; it does not enumerate
-  arbitrary Helm value permutations.
+  arbitrary Helm value permutations. If a chart's synthetic branches trigger
+  chart-authored validation, discovery uses Helm lint mode and reports the
+  validation messages; malformed YAML is isolated by skipping only the
+  unparseable rendered templates, with a warning.
 - **Optional flag attribution** — Bounded, best-effort render probes that try to
   associate an optional image with the smallest known set of false Helm boolean
-  value paths. Attribution failure never removes the optional marker.
+  value paths. It is limited by the configured timeout and a 32-render safety
+  cap for large charts. Attribution failure never removes the optional marker.
 - **Push engine** — `internal/push`: the registry-transfer logic (archive, probe,
   interactive selection, concurrent push) shared by both the CLI `push` subcommand
   and the standalone push binary.

@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"path"
+	"sort"
 	"strings"
+	"sync"
 
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/engine"
+	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/releaseutil"
 	"helm.sh/helm/v3/pkg/strvals"
 )
@@ -24,7 +28,7 @@ func (r Runner) renderChartManifest(ctx context.Context, opts Options) (string, 
 	if err != nil {
 		return "", err
 	}
-	return renderChartManifestWithValues(loaded.Chart, userValues)
+	return renderChartManifestWithValues(loaded.Chart, userValues, false)
 }
 
 func (r Runner) renderChartManifestWithValues(ctx context.Context, opts Options, userValues map[string]interface{}) (string, error) {
@@ -32,10 +36,18 @@ func (r Runner) renderChartManifestWithValues(ctx context.Context, opts Options,
 	if err != nil {
 		return "", err
 	}
-	return renderChartManifestWithValues(loaded.Chart, userValues)
+	return renderChartManifestWithValues(loaded.Chart, userValues, false)
 }
 
-func renderChartManifestWithValues(source *helmchart.Chart, userValues map[string]interface{}) (string, error) {
+func (r Runner) renderChartManifestWithValuesForDiscovery(ctx context.Context, opts Options, userValues map[string]interface{}) (string, error) {
+	loaded, err := r.loadChart(ctx, opts)
+	if err != nil {
+		return "", err
+	}
+	return renderChartManifestWithValues(loaded.Chart, userValues, true)
+}
+
+func renderChartManifestWithValues(source *helmchart.Chart, userValues map[string]interface{}, lintMode bool) (string, error) {
 	chrt, err := cloneChart(source)
 	if err != nil {
 		return "", err
@@ -65,7 +77,17 @@ func renderChartManifestWithValues(source *helmchart.Chart, userValues map[strin
 		return "", err
 	}
 
-	renderedFiles, err := engine.Render(chrt, renderValues)
+	// Keep the normal render strict. Synthetic discovery is inventory-only, so
+	// use Helm's lint mode; this lets guards such as kube-prometheus-stack's
+	// required Grafana selector produce enough output for image extraction
+	// without changing the user's render.
+	var renderedFiles map[string]string
+	var lintWarnings []string
+	if lintMode {
+		renderedFiles, lintWarnings, err = renderWithLintMode(chrt, renderValues)
+	} else {
+		renderedFiles, err = engine.Render(chrt, renderValues)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -74,9 +96,72 @@ func renderChartManifestWithValues(source *helmchart.Chart, userValues map[strin
 
 	hooks, manifests, err := releaseutil.SortManifests(renderedFiles, nil, releaseutil.InstallOrder)
 	if err != nil {
+		if lintMode {
+			manifest, partialErr := renderBestEffortManifest(chrt, renderedFiles)
+			return manifest, appendPartialRenderWarnings(partialErr, lintWarnings)
+		}
 		return renderDebugManifest(renderedFiles), fmt.Errorf("sort manifests: %w", err)
 	}
+	manifest := formatRenderedManifest(chrt, hooks, manifests)
+	if len(lintWarnings) > 0 {
+		return manifest, &partialRenderError{warnings: lintWarnings}
+	}
+	return manifest, nil
+}
 
+var helmLintRenderMu sync.Mutex
+
+func renderWithLintMode(chrt *helmchart.Chart, renderValues chartutil.Values) (map[string]string, []string, error) {
+	helmLintRenderMu.Lock()
+	defer helmLintRenderMu.Unlock()
+
+	previousWriter := log.Writer()
+	var lintLog bytes.Buffer
+	log.SetOutput(&lintLog)
+	defer log.SetOutput(previousWriter)
+	rendered, err := (engine.Engine{LintMode: true}).Render(chrt, renderValues)
+	return rendered, parseLintWarnings(lintLog.String()), err
+}
+
+func parseLintWarnings(output string) []string {
+	const infoMarker = "[INFO] "
+	seen := make(map[string]struct{})
+	warnings := make([]string, 0)
+	for _, line := range strings.Split(output, "\n") {
+		markerIndex := strings.Index(line, infoMarker)
+		if markerIndex < 0 {
+			continue
+		}
+		message := strings.TrimSpace(line[markerIndex+len(infoMarker):])
+		if message == "" {
+			continue
+		}
+		if _, ok := seen[message]; ok {
+			continue
+		}
+		seen[message] = struct{}{}
+		warnings = append(warnings, fmt.Sprintf("synthetic render validation warning: %s", message))
+	}
+	return warnings
+}
+
+func appendPartialRenderWarnings(partialErr error, warnings []string) error {
+	if len(warnings) == 0 {
+		return partialErr
+	}
+	if partialErr == nil {
+		return &partialRenderError{warnings: warnings}
+	}
+	partial, ok := partialErr.(*partialRenderError)
+	if !ok {
+		return partialErr
+	}
+	combined := append([]string(nil), warnings...)
+	combined = append(combined, partial.warnings...)
+	return &partialRenderError{warnings: combined}
+}
+
+func formatRenderedManifest(chrt *helmchart.Chart, hooks []*release.Hook, manifests []releaseutil.Manifest) string {
 	var out bytes.Buffer
 	for _, crd := range chrt.CRDObjects() {
 		fmt.Fprintf(&out, "---\n# Source: %s\n%s\n", crd.Filename, string(crd.File.Data))
@@ -87,7 +172,48 @@ func renderChartManifestWithValues(source *helmchart.Chart, userValues map[strin
 	for _, manifest := range manifests {
 		fmt.Fprintf(&out, "---\n# Source: %s\n%s\n", manifest.Name, manifest.Content)
 	}
-	return out.String(), nil
+	return out.String()
+}
+
+type partialRenderError struct {
+	warnings []string
+}
+
+func (e *partialRenderError) Error() string {
+	return strings.Join(e.warnings, "; ")
+}
+
+func renderBestEffortManifest(chrt *helmchart.Chart, renderedFiles map[string]string) (string, error) {
+	// A chart can render most templates successfully while one synthetic branch
+	// emits invalid YAML. Sort each rendered file independently so that branch
+	// does not hide images from every other template.
+	files := make([]string, 0, len(renderedFiles))
+	for name := range renderedFiles {
+		files = append(files, name)
+	}
+	sort.Strings(files)
+
+	var hooks []*release.Hook
+	var manifests []releaseutil.Manifest
+	warnings := make([]string, 0)
+	for _, name := range files {
+		fileHooks, fileManifests, err := releaseutil.SortManifests(
+			map[string]string{name: renderedFiles[name]},
+			nil,
+			releaseutil.InstallOrder,
+		)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("optional image discovery skipped unparseable rendered template %q: %v", name, err))
+			continue
+		}
+		hooks = append(hooks, fileHooks...)
+		manifests = append(manifests, fileManifests...)
+	}
+	if len(warnings) == 0 {
+		return renderDebugManifest(renderedFiles), nil
+	}
+
+	return formatRenderedManifest(chrt, hooks, manifests), &partialRenderError{warnings: warnings}
 }
 
 func cloneChart(source *helmchart.Chart) (*helmchart.Chart, error) {

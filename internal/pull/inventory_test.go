@@ -2,6 +2,7 @@ package pull
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,89 @@ spec:
 	}
 	if strings.Contains(normal, "quay.io/example/sidecar:v2") {
 		t.Fatalf("normal render unexpectedly contains optional image: %q", normal)
+	}
+}
+
+func TestDiscoverOptionalChartImagesContinuesPastTemplateValidationFailure(t *testing.T) {
+	chartDir := writeInventoryTestChart(t, `guard:
+  enabled: false
+  labels: {}
+optional:
+  enabled: false
+`, `{{- if and .Values.guard.enabled (not .Values.guard.labels) }}
+{{ fail "guard.labels must be specified when guard.enabled is true" }}
+{{- end }}
+{{- if .Values.optional.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: optional
+spec:
+  containers:
+    - name: optional
+      image: quay.io/example/optional:v1
+{{- end }}
+`)
+
+	discovery, err := NewRunner().discoverOptionalChartImages(context.Background(), Options{
+		Chart: chartDir,
+	}, nil)
+	if err != nil {
+		t.Fatalf("discoverOptionalChartImages() error = %v", err)
+	}
+	if got, want := discovery.Images, []string{"quay.io/example/optional:v1"}; !equalStrings(got, want) {
+		t.Fatalf("optional images = %v, want %v (warnings: %v)", got, want, discovery.Warnings)
+	}
+	if !strings.Contains(strings.Join(discovery.Warnings, "\n"), "guard.labels must be specified") {
+		t.Fatalf("warnings = %v, want chart validation warning", discovery.Warnings)
+	}
+	if _, err := NewRunner().renderChartManifest(context.Background(), Options{
+		Chart:     chartDir,
+		SetValues: []string{"guard.enabled=true"},
+	}); err == nil {
+		t.Fatal("normal render unexpectedly ignored the chart validation failure")
+	}
+}
+
+func TestDiscoverOptionalChartImagesSkipsMalformedSyntheticTemplate(t *testing.T) {
+	chartDir := writeInventoryTestChartFiles(t, `broken:
+  enabled: false
+optional:
+  enabled: false
+`, map[string]string{
+		"broken.yaml": `{{- if .Values.broken.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: broken
+spec:
+  value: [
+{{- end }}
+`,
+		"optional.yaml": `{{- if .Values.optional.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: optional
+spec:
+  containers:
+    - name: optional
+      image: quay.io/example/optional:v1
+{{- end }}
+`,
+	})
+
+	discovery, err := NewRunner().discoverOptionalChartImages(context.Background(), Options{
+		Chart: chartDir,
+	}, nil)
+	if err != nil {
+		t.Fatalf("discoverOptionalChartImages() error = %v", err)
+	}
+	if got, want := discovery.Images, []string{"quay.io/example/optional:v1"}; !equalStrings(got, want) {
+		t.Fatalf("optional images = %v, want %v (warnings: %v)", got, want, discovery.Warnings)
+	}
+	if !strings.Contains(strings.Join(discovery.Warnings, "\n"), "broken.yaml") {
+		t.Fatalf("warnings = %v, want malformed template warning", discovery.Warnings)
 	}
 }
 
@@ -151,6 +235,74 @@ func TestMinimalImageFlagSetOmitsPathsWhenProbeFails(t *testing.T) {
 	}
 }
 
+func TestAttributeOptionalImagesStopsAtRenderProbeBudget(t *testing.T) {
+	paths := make([]valuePath, maxOptionalImageAttributionProbes+8)
+	for index := range paths {
+		paths[index] = valuePath{{key: fmt.Sprintf("flag%d", index), isKey: true}}
+	}
+
+	runner := NewRunner()
+	probeCalls := 0
+	runner.renderManifestValues = func(_ Runner, _ context.Context, _ Options, _ map[string]interface{}) (string, error) {
+		probeCalls++
+		return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: probe\n", nil
+	}
+	runner.extractImages = func(string) ([]string, error) {
+		return nil, nil
+	}
+	_, warnings := runner.attributeOptionalImages(
+		context.Background(),
+		Options{OptionalImageTimeout: time.Second},
+		map[string]interface{}{},
+		paths,
+		map[string]struct{}{},
+		map[string]struct{}{"quay.io/example/optional:v1": {}},
+	)
+
+	if probeCalls != maxOptionalImageAttributionProbes {
+		t.Fatalf("probe calls = %d, want %d", probeCalls, maxOptionalImageAttributionProbes)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "stopped after 32 render probes") {
+		t.Fatalf("warnings = %v, want probe-budget warning", warnings)
+	}
+}
+
+func TestAttributeOptionalImagesUsesPartialProbeManifest(t *testing.T) {
+	paths := []valuePath{
+		{{key: "first", isKey: true}},
+		{{key: "second", isKey: true}},
+	}
+	runner := NewRunner()
+	runner.renderManifestValues = func(_ Runner, _ context.Context, _ Options, values map[string]interface{}) (string, error) {
+		if _, enabled := values["first"]; enabled {
+			return "partial first", &partialRenderError{warnings: []string{"synthetic render validation warning: guard failed"}}
+		}
+		return "partial second", &partialRenderError{warnings: []string{"synthetic render validation warning: unrelated guard failed"}}
+	}
+	runner.extractImages = func(manifest string) ([]string, error) {
+		if manifest == "partial first" {
+			return []string{"quay.io/example/optional:v1"}, nil
+		}
+		return nil, nil
+	}
+
+	flags, warnings := runner.attributeOptionalImages(
+		context.Background(),
+		Options{OptionalImageTimeout: time.Second},
+		map[string]interface{}{},
+		paths,
+		map[string]struct{}{},
+		map[string]struct{}{"quay.io/example/optional:v1": {}},
+	)
+
+	if got, want := flags["quay.io/example/optional:v1"], []string{".Values.first"}; !equalStrings(got, want) {
+		t.Fatalf("flags = %v, want %v", flags, want)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "guard failed") {
+		t.Fatalf("warnings = %v, want partial-render warning", warnings)
+	}
+}
+
 func TestMergeImageInventoryRequiredStatusWins(t *testing.T) {
 	got := mergeImageInventory(
 		[]string{"quay.io/example/annotation:v1", "quay.io/example/shared:v1"},
@@ -203,6 +355,11 @@ func TestExtractChartAnnotationImagesRecursesThroughDependencies(t *testing.T) {
 
 func writeInventoryTestChart(t *testing.T, values, template string) string {
 	t.Helper()
+	return writeInventoryTestChartFiles(t, values, map[string]string{"deployment.yaml": template})
+}
+
+func writeInventoryTestChartFiles(t *testing.T, values string, templates map[string]string) string {
+	t.Helper()
 	chartDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(chartDir, "templates"), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -216,8 +373,10 @@ version: 0.1.0
 	if err := os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(values), 0o644); err != nil {
 		t.Fatalf("WriteFile(values.yaml) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(template), 0o644); err != nil {
-		t.Fatalf("WriteFile(template) error = %v", err)
+	for name, template := range templates {
+		if err := os.WriteFile(filepath.Join(chartDir, "templates", name), []byte(template), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", name, err)
+		}
 	}
 	return chartDir
 }
