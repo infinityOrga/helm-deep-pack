@@ -3,6 +3,7 @@ package validation
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateURL(t *testing.T) {
@@ -154,6 +155,30 @@ func TestValidateConcurrency(t *testing.T) {
 		t.Errorf("ValidateConcurrency(maxValue+1=%d) should error", maxValue+1)
 	} else if !strings.Contains(err.Error(), "must not exceed") {
 		t.Errorf("ValidateConcurrency(maxValue+1=%d) error = %v, want to contain %q", maxValue+1, err, "must not exceed")
+	}
+}
+
+func TestValidateNonNegativeDuration(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     time.Duration
+		wantError bool
+	}{
+		{name: "zero", value: 0},
+		{name: "positive", value: time.Second},
+		{name: "negative", value: -time.Second, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateNonNegativeDuration("test", tt.value)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("ValidateNonNegativeDuration() error = %v, wantError %v", err, tt.wantError)
+			}
+			if tt.wantError && !strings.Contains(err.Error(), "must not be negative") {
+				t.Fatalf("ValidateNonNegativeDuration() error = %v, want negative-duration message", err)
+			}
+		})
 	}
 }
 

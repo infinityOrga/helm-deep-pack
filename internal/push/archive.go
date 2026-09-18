@@ -30,7 +30,7 @@ var appendLayoutImage = func(path layout.Path, img v1.Image) error {
 }
 
 func ArchiveImages(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, error) {
-	specs, _, err := archiveImages(ctx, images, outputDir, concurrency, false, status...)
+	specs, _, err := archiveImages(ctx, images, outputDir, concurrency, strictArchivePolicy{}, status...)
 	return specs, err
 }
 
@@ -47,31 +47,56 @@ func (f ArchiveFailure) Error() string {
 // per-image failures separately. Setup failures (for example, an unusable OCI
 // layout) are returned as the function error.
 func ArchiveImagesBestEffort(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
-	return archiveImages(ctx, images, outputDir, concurrency, true, status...)
+	return archiveImages(ctx, images, outputDir, concurrency, bestEffortArchivePolicy{}, status...)
 }
 
-func archiveImages(ctx context.Context, images []string, outputDir string, concurrency int, bestEffort bool, status ...io.Writer) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
+type archivePolicy interface {
+	buildSpecs(images []string) ([]pushspec.ArchiveSpec, []ArchiveFailure, error)
+	recordFailure(image string, err error) (ArchiveFailure, bool)
+}
+
+type strictArchivePolicy struct{}
+
+func (strictArchivePolicy) buildSpecs(images []string) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
+	specs, err := pushspec.BuildSpecs(images)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build archive specs: %w", err)
+	}
+	return specs, nil, nil
+}
+
+func (strictArchivePolicy) recordFailure(string, error) (ArchiveFailure, bool) {
+	return ArchiveFailure{}, false
+}
+
+type bestEffortArchivePolicy struct{}
+
+func (bestEffortArchivePolicy) buildSpecs(images []string) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
+	specs := make([]pushspec.ArchiveSpec, 0, len(images))
+	failures := make([]ArchiveFailure, 0)
+	for _, image := range images {
+		built, err := pushspec.BuildSpecs([]string{image})
+		if err != nil {
+			failures = append(failures, ArchiveFailure{Image: image, Err: fmt.Errorf("build archive spec: %w", err)})
+			continue
+		}
+		specs = append(specs, built[0])
+	}
+	return specs, failures, nil
+}
+
+func (bestEffortArchivePolicy) recordFailure(image string, err error) (ArchiveFailure, bool) {
+	return ArchiveFailure{Image: image, Err: err}, true
+}
+
+func archiveImages(ctx context.Context, images []string, outputDir string, concurrency int, policy archivePolicy, status ...io.Writer) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return nil, nil, fmt.Errorf("create output dir: %w", err)
 	}
 
-	specs := make([]pushspec.ArchiveSpec, 0, len(images))
-	failures := make([]ArchiveFailure, 0)
-	if bestEffort {
-		for _, image := range images {
-			built, err := pushspec.BuildSpecs([]string{image})
-			if err != nil {
-				failures = append(failures, ArchiveFailure{Image: image, Err: fmt.Errorf("build archive spec: %w", err)})
-				continue
-			}
-			specs = append(specs, built[0])
-		}
-	} else {
-		var err error
-		specs, err = pushspec.BuildSpecs(images)
-		if err != nil {
-			return nil, nil, fmt.Errorf("build archive specs: %w", err)
-		}
+	specs, failures, err := policy.buildSpecs(images)
+	if err != nil {
+		return nil, nil, err
 	}
 	if len(specs) == 0 {
 		return nil, failures, nil
@@ -98,9 +123,10 @@ func archiveImages(ctx context.Context, images []string, outputDir string, concu
 
 			digest, copyErr := copyImageToLayoutUsingGoContainerRegistry(groupCtx, specs[i].Image, layoutPath, &writeMu, progressTracker)
 			if copyErr != nil {
-				if bestEffort {
+				failure, record := policy.recordFailure(specs[i].Image, copyErr)
+				if record {
 					failureMu.Lock()
-					failures = append(failures, ArchiveFailure{Image: specs[i].Image, Err: copyErr})
+					failures = append(failures, failure)
 					failureMu.Unlock()
 					return nil
 				}

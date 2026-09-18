@@ -72,8 +72,8 @@ var pullCmd = &cobra.Command{
 		if err := validation.ValidateConcurrency("--concurrency", pullConcurrency); err != nil {
 			return err
 		}
-		if pullOptionalImageTimeout < 0 {
-			return fmt.Errorf("--optional-image-timeout must not be negative")
+		if err := validation.ValidateNonNegativeDuration("--optional-image-timeout", pullOptionalImageTimeout); err != nil {
+			return err
 		}
 		if pullDestPlatform != "" {
 			if err := validation.ValidateDestinationPlatform("--destination-platform", pullDestPlatform); err != nil {

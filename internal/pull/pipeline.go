@@ -52,7 +52,9 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 	if err != nil {
 		return PullResult{}, fmt.Errorf("load chart: %w", err)
 	}
-	_, _ = fmt.Fprintf(statusOut, "chart: name=%s version=%s source=%s\n", loaded.Info.Name, loaded.Info.Version, loaded.Info.Source)
+	if err := writeStatus(statusOut, "chart: name=%s version=%s source=%s\n", loaded.Info.Name, loaded.Info.Version, loaded.Info.Source); err != nil {
+		return PullResult{}, err
+	}
 
 	chartImages, err := r.extractChartImages(runCtx, opts)
 	if err != nil {
@@ -73,10 +75,14 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 
 	optionalDiscovery, discoveryErr := r.discoverOptionalImages(runCtx, opts, images)
 	if discoveryErr != nil {
-		_, _ = fmt.Fprintf(statusOut, "warning: optional image discovery failed; optional images may be missing: %v\n", discoveryErr)
+		if err := writeStatus(statusOut, "warning: optional image discovery failed; optional images may be missing: %v\n", discoveryErr); err != nil {
+			return PullResult{}, err
+		}
 	} else {
 		for _, warning := range optionalDiscovery.Warnings {
-			_, _ = fmt.Fprintf(statusOut, "warning: %s\n", warning)
+			if err := writeStatus(statusOut, "warning: %s\n", warning); err != nil {
+				return PullResult{}, err
+			}
 		}
 	}
 
@@ -96,17 +102,23 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 	if len(optionalImages) > 0 {
 		archived, failures, archiveErr := r.archiveOptionalImages(runCtx, optionalImages, outputDir, opts.Concurrency, statusOut)
 		if archiveErr != nil {
-			_, _ = fmt.Fprintf(statusOut, "warning: optional image archiving failed; optional images may be missing: %v\n", archiveErr)
+			if err := writeStatus(statusOut, "warning: optional image archiving failed; optional images may be missing: %v\n", archiveErr); err != nil {
+				return PullResult{}, err
+			}
 		}
 		for _, failure := range failures {
-			_, _ = fmt.Fprintf(statusOut, "warning: skipping optional image %q: %v\n", failure.Image, failure.Err)
+			if err := writeStatus(statusOut, "warning: skipping optional image %q: %v\n", failure.Image, failure.Err); err != nil {
+				return PullResult{}, err
+			}
 		}
 		applyImageMetadata(archived, inventory)
 		specs = append(specs, archived...)
 	}
 
 	requiredCount, optionalCount := countImageCategories(specs)
-	_, _ = fmt.Fprintf(statusOut, "images staged: required=%d optional=%d\n", requiredCount, optionalCount)
+	if err := writeStatus(statusOut, "images staged: required=%d optional=%d\n", requiredCount, optionalCount); err != nil {
+		return PullResult{}, err
+	}
 
 	if err := r.writePushManifest(outputDir, specs); err != nil {
 		return PullResult{}, fmt.Errorf("write push manifest: %w", err)
@@ -128,6 +140,13 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 		ManifestPath: filepath.Join(outputDir, pushspec.PushManifestFileName()),
 	}
 	return result, nil
+}
+
+func writeStatus(w io.Writer, format string, args ...interface{}) error {
+	if _, err := fmt.Fprintf(w, format, args...); err != nil {
+		return fmt.Errorf("write status: %w", err)
+	}
+	return nil
 }
 
 func mergeImageInventory(chartImages, renderedImages []string, optional optionalImageDiscovery) []imageInventoryEntry {

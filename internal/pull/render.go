@@ -28,15 +28,7 @@ func (r Runner) renderChartManifest(ctx context.Context, opts Options) (string, 
 	if err != nil {
 		return "", err
 	}
-	return renderChartManifestWithValues(loaded.Chart, userValues, false)
-}
-
-func (r Runner) renderChartManifestWithValues(ctx context.Context, opts Options, userValues map[string]interface{}) (string, error) {
-	loaded, err := r.loadChart(ctx, opts)
-	if err != nil {
-		return "", err
-	}
-	return renderChartManifestWithValues(loaded.Chart, userValues, false)
+	return r.renderLoadedChartManifest(loaded.Chart, userValues, false)
 }
 
 func (r Runner) renderChartManifestWithValuesForDiscovery(ctx context.Context, opts Options, userValues map[string]interface{}) (string, error) {
@@ -44,10 +36,10 @@ func (r Runner) renderChartManifestWithValuesForDiscovery(ctx context.Context, o
 	if err != nil {
 		return "", err
 	}
-	return renderChartManifestWithValues(loaded.Chart, userValues, true)
+	return r.renderLoadedChartManifest(loaded.Chart, userValues, true)
 }
 
-func renderChartManifestWithValues(source *helmchart.Chart, userValues map[string]interface{}, lintMode bool) (string, error) {
+func (r Runner) renderLoadedChartManifest(source *helmchart.Chart, userValues map[string]interface{}, lintMode bool) (string, error) {
 	chrt, err := cloneChart(source)
 	if err != nil {
 		return "", err
@@ -84,7 +76,10 @@ func renderChartManifestWithValues(source *helmchart.Chart, userValues map[strin
 	var renderedFiles map[string]string
 	var lintWarnings []string
 	if lintMode {
-		renderedFiles, lintWarnings, err = renderWithLintMode(chrt, renderValues)
+		if r.lintRender == nil {
+			return "", fmt.Errorf("render lint mode: no lint renderer configured")
+		}
+		renderedFiles, lintWarnings, err = r.lintRender(chrt, renderValues)
 	} else {
 		renderedFiles, err = engine.Render(chrt, renderValues)
 	}
@@ -109,11 +104,17 @@ func renderChartManifestWithValues(source *helmchart.Chart, userValues map[strin
 	return manifest, nil
 }
 
-var helmLintRenderMu sync.Mutex
+type helmLintRenderer struct {
+	mu sync.Mutex
+}
 
-func renderWithLintMode(chrt *helmchart.Chart, renderValues chartutil.Values) (map[string]string, []string, error) {
-	helmLintRenderMu.Lock()
-	defer helmLintRenderMu.Unlock()
+func (r *helmLintRenderer) Render(chrt *helmchart.Chart, renderValues chartutil.Values) (map[string]string, []string, error) {
+	// Helm's engine uses the process-wide standard logger for lint diagnostics
+	// and does not expose a writer or logger dependency. Serialize the brief
+	// redirection for this runner and keep this SDK limitation behind the
+	// injectable lintRender collaborator.
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	previousWriter := log.Writer()
 	var lintLog bytes.Buffer

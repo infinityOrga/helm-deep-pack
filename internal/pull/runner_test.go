@@ -3,6 +3,7 @@ package pull
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"helm-deep-pack/internal/push"
 	"helm-deep-pack/internal/pushspec"
@@ -435,6 +436,30 @@ func TestRunnerExecuteReturnsPullResult(t *testing.T) {
 	if len(result.ArchiveSpecs) != 1 || result.ArchiveSpecs[0].Image != "busybox:1.36" {
 		t.Fatalf("Runner.Execute() archiveSpecs = %#v", result.ArchiveSpecs)
 	}
+}
+
+func TestRunnerExecuteReturnsStatusWriterError(t *testing.T) {
+	h := newRunnerTestHarness(t)
+	h.runner.localChartSource = func(_ context.Context, opts Options) (loadedChart, error) {
+		return testLoadedChart("example", "0.1.0", opts.Chart), nil
+	}
+
+	_, err := h.runner.Execute(context.Background(), Options{
+		Chart:     "ignored-by-stub",
+		OutputDir: t.TempDir(),
+	}, failingWriter{})
+	if err == nil {
+		t.Fatal("Runner.Execute() error = nil, want status writer error")
+	}
+	if !strings.Contains(err.Error(), "write status") {
+		t.Fatalf("Runner.Execute() error = %v, want status write attribution", err)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("status unavailable")
 }
 
 func TestRunnerExecuteRemovesEmptyCreatedOutputDirOnError(t *testing.T) {

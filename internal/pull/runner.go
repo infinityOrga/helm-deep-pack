@@ -20,6 +20,7 @@ import (
 	"time"
 
 	helmchart "helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chartutil"
 
 	"helm-deep-pack/internal/chartimages"
 	"helm-deep-pack/internal/push"
@@ -71,6 +72,7 @@ type Runner struct {
 	searchRepoVersions     func(ctx context.Context, repo, chart string) ([]searchResult, error)
 	renderManifest         func(r Runner, ctx context.Context, opts Options) (string, error)
 	renderManifestValues   func(r Runner, ctx context.Context, opts Options, values map[string]interface{}) (string, error)
+	lintRender             func(chrt *helmchart.Chart, values chartutil.Values) (map[string]string, []string, error)
 	extractChartImages     func(ctx context.Context, opts Options) ([]string, error)
 	extractImages          func(manifest string) ([]string, error)
 	discoverOptionalImages func(ctx context.Context, opts Options, baseline []string) (optionalImageDiscovery, error)
@@ -95,6 +97,7 @@ func Run(ctx context.Context, opts Options, status ...io.Writer) error {
 }
 
 func NewRunner() Runner {
+	lintRenderer := &helmLintRenderer{}
 	r := Runner{
 		searchRepoVersions: helmSearchRepoVersions,
 		renderManifest: func(r Runner, ctx context.Context, opts Options) (string, error) {
@@ -103,6 +106,7 @@ func NewRunner() Runner {
 		renderManifestValues: func(r Runner, ctx context.Context, opts Options, values map[string]interface{}) (string, error) {
 			return r.renderChartManifestWithValuesForDiscovery(ctx, opts, values)
 		},
+		lintRender:            lintRenderer.Render,
 		extractImages:         chartimages.ExtractImages,
 		archiveImages:         push.ArchiveImages,
 		archiveOptionalImages: push.ArchiveImagesBestEffort,

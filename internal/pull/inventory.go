@@ -130,34 +130,14 @@ func cloneValues(values map[string]interface{}) (map[string]interface{}, error) 
 
 func collectFalseBooleanPaths(values interface{}) []valuePath {
 	var paths []valuePath
-	collectFalseBooleanPathsAt(values, nil, &paths)
+	walkValueTree(values, nil, func(value interface{}, path valuePath) (interface{}, bool) {
+		flag, ok := value.(bool)
+		if ok && !flag && len(path) > 0 && path[len(path)-1].isKey {
+			paths = append(paths, path)
+		}
+		return value, false
+	})
 	return paths
-}
-
-func collectFalseBooleanPathsAt(value interface{}, path valuePath, paths *[]valuePath) {
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			childPath := appendPathKey(path, key)
-			if flag, ok := typed[key].(bool); ok {
-				if !flag {
-					*paths = append(*paths, childPath)
-				}
-				continue
-			}
-			collectFalseBooleanPathsAt(typed[key], childPath, paths)
-		}
-	case []interface{}:
-		for index, child := range typed {
-			childPath := appendPathIndex(path, index)
-			collectFalseBooleanPathsAt(child, childPath, paths)
-		}
-	}
 }
 
 func appendPathKey(path valuePath, key string) valuePath {
@@ -172,31 +152,60 @@ func appendPathIndex(path valuePath, index int) valuePath {
 
 func enableValuePaths(values map[string]interface{}, paths []valuePath) {
 	for _, path := range paths {
-		var current interface{} = values
-		for index, part := range path {
-			last := index == len(path)-1
-			switch typed := current.(type) {
-			case map[string]interface{}:
-				if last {
-					typed[part.key] = true
-					continue
-				}
-				current = typed[part.key]
-			case []interface{}:
-				if part.isKey || part.index < 0 || part.index >= len(typed) {
-					current = nil
-					continue
-				}
-				if last {
-					typed[part.index] = true
-					continue
-				}
-				current = typed[part.index]
-			default:
-				current = nil
+		setValuePath(values, path)
+	}
+}
+
+func setValuePath(values map[string]interface{}, path valuePath) {
+	var current interface{} = values
+	for index, part := range path {
+		last := index == len(path)-1
+		switch typed := current.(type) {
+		case map[string]interface{}:
+			if !part.isKey {
+				return
 			}
+			if last {
+				typed[part.key] = true
+				return
+			}
+			current = typed[part.key]
+		case []interface{}:
+			if part.isKey || part.index < 0 || part.index >= len(typed) {
+				return
+			}
+			if last {
+				typed[part.index] = true
+				return
+			}
+			current = typed[part.index]
+		default:
+			return
 		}
 	}
+}
+
+func walkValueTree(value interface{}, path valuePath, visit func(value interface{}, path valuePath) (interface{}, bool)) interface{} {
+	if replacement, replace := visit(value, path); replace {
+		value = replacement
+	}
+
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			typed[key] = walkValueTree(typed[key], appendPathKey(path, key), visit)
+		}
+	case []interface{}:
+		for index, child := range typed {
+			typed[index] = walkValueTree(child, appendPathIndex(path, index), visit)
+		}
+	}
+	return value
 }
 
 func (r Runner) attributeOptionalImages(
@@ -385,11 +394,11 @@ func splitValuePaths(paths []valuePath, count int) [][]valuePath {
 func subtractValuePaths(paths, remove []valuePath) []valuePath {
 	removeSet := make(map[string]struct{}, len(remove))
 	for _, path := range remove {
-		removeSet[pathKey(path)] = struct{}{}
+		removeSet[path.String()] = struct{}{}
 	}
 	result := make([]valuePath, 0, len(paths)-len(remove))
 	for _, path := range paths {
-		if _, ok := removeSet[pathKey(path)]; !ok {
+		if _, ok := removeSet[path.String()]; !ok {
 			result = append(result, path)
 		}
 	}
@@ -399,12 +408,8 @@ func subtractValuePaths(paths, remove []valuePath) []valuePath {
 func valuePathsKey(paths []valuePath) string {
 	keys := make([]string, 0, len(paths))
 	for _, path := range paths {
-		keys = append(keys, pathKey(path))
+		keys = append(keys, path.String())
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, "\x1f")
-}
-
-func pathKey(path valuePath) string {
-	return path.String()
 }

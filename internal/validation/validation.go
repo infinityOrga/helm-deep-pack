@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	containername "github.com/google/go-containerregistry/pkg/name"
 )
@@ -200,6 +201,15 @@ func ValidateConcurrency(name string, value int) error {
 	max := maxConcurrency()
 	if value > max {
 		return fmt.Errorf("%s must not exceed %d (derived from %d CPUs)", name, max, runtime.NumCPU())
+	}
+	return nil
+}
+
+// ValidateNonNegativeDuration checks that a duration is zero or greater.
+// Zero is supported by callers that use it to disable optional work.
+func ValidateNonNegativeDuration(name string, value time.Duration) error {
+	if value < 0 {
+		return fmt.Errorf("%s must not be negative", name)
 	}
 	return nil
 }

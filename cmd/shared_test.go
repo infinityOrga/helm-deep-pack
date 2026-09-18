@@ -7,13 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"helm-deep-pack/internal/add"
 	"helm-deep-pack/internal/pull"
 	"helm-deep-pack/internal/push"
+	"helm-deep-pack/internal/validation"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -234,14 +234,9 @@ func resetCmdVars(cmdName string) {
 }
 
 func validConcurrencyValues() []string {
-	max := runtime.NumCPU() * 4
-	if max > 256 {
-		max = 256
-	}
-
 	values := []string{"1"}
 	for _, value := range []int{4, 8, 16} {
-		if value <= max {
+		if validation.ValidateConcurrency("--concurrency", value) == nil {
 			values = append(values, fmt.Sprintf("%d", value))
 		}
 	}
