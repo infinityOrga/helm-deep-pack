@@ -155,11 +155,7 @@ func buildLocalHelperBinaryFromSource(ctx context.Context, outputDir, goos, goar
 	dst := filepath.Join(outputDir, helperBinaryName(goos))
 	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-ldflags=-s -w", "-o", dst, "./cmd/pushimages")
 	cmd.Dir = moduleRoot
-	cmd.Env = append(os.Environ(),
-		"CGO_ENABLED=0",
-		"GOOS="+goos,
-		"GOARCH="+goarch,
-	)
+	cmd.Env = localHelperBuildEnvironment(os.Environ(), goos, goarch)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("go build ./cmd/pushimages for %s/%s: %w (%s)", goos, goarch, err, strings.TrimSpace(string(out)))
@@ -170,6 +166,29 @@ func buildLocalHelperBinaryFromSource(ctx context.Context, outputDir, goos, goar
 		}
 	}
 	return dst, nil
+}
+
+func localHelperBuildEnvironment(baseEnv []string, goos, goarch string) []string {
+	env := append([]string(nil), baseEnv...)
+	env = setEnvironmentValue(env, "CGO_ENABLED", "1")
+	env = setEnvironmentValue(env, "GOOS", goos)
+	env = setEnvironmentValue(env, "GOARCH", goarch)
+	if goos == "linux" && goarch == "arm64" {
+		env = setEnvironmentValue(env, "CC", "aarch64-linux-gnu-gcc")
+		env = setEnvironmentValue(env, "CXX", "aarch64-linux-gnu-g++")
+	}
+	return env
+}
+
+func setEnvironmentValue(env []string, key, value string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return append(filtered, prefix+value)
 }
 
 func findModuleRoot() (string, error) {

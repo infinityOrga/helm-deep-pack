@@ -11,7 +11,7 @@ budget.
 - Date: 2026-09-18
 - Host: Linux `7.0.0-1006-aws`, Intel Xeon Platinum 8488C, 2 CPUs
 - Go: `go1.26.3 linux/amd64`
-- Build mode: `CGO_ENABLED=0`
+- Build mode: `CGO_ENABLED=1`
 - Benchmark flags: `-benchmem -benchtime=1s -count=5`
 - Baseline commit: `9b1b12e`
 
@@ -61,7 +61,7 @@ they do not make the pull fail, and optional images remain marked optional.
 Changed tree, normal render for all three charts:
 
 ```bash
-CGO_ENABLED=0 go test ./internal/pull -run '^$' \
+CGO_ENABLED=1 go test ./internal/pull -run '^$' \
   -bench '^Benchmark(NodeExporterNormalRender|KubePrometheusStackNormalRender|PrometheusNormalRender)$' \
   -benchmem -benchtime=1s -count=5
 ```
@@ -70,7 +70,7 @@ Changed tree, normal render plus synthetic discovery but with attribution
 disabled. This isolates the cost of finding the discoverable image union:
 
 ```bash
-CGO_ENABLED=0 go test ./internal/pull -run '^$' \
+CGO_ENABLED=1 go test ./internal/pull -run '^$' \
   -bench '^Benchmark(NodeExporterNormalAndSyntheticDiscoveryNoAttribution|KubePrometheusStackNormalAndSyntheticDiscoveryNoAttribution|PrometheusNormalAndSyntheticDiscoveryNoAttribution)$' \
   -benchmem -benchtime=1s -count=5
 ```
@@ -78,7 +78,7 @@ CGO_ENABLED=0 go test ./internal/pull -run '^$' \
 Changed tree, complete default path including attribution:
 
 ```bash
-CGO_ENABLED=0 go test ./internal/pull -run '^$' \
+CGO_ENABLED=1 go test ./internal/pull -run '^$' \
   -bench '^Benchmark(NodeExporterNormalAndSyntheticDiscovery|KubePrometheusStackNormalAndSyntheticDiscovery|PrometheusNormalAndSyntheticDiscovery)$' \
   -benchmem -benchtime=1s -count=5
 ```
@@ -95,7 +95,7 @@ harness should call `renderChartManifest` with each of the three chart paths and
 use the same benchmark flags and environment variables. Then run:
 
 ```bash
-CGO_ENABLED=0 go test ./internal/pull -run '^$' \
+CGO_ENABLED=1 go test ./internal/pull -run '^$' \
   -bench '^Benchmark(NodeExporterNormalRender|KubePrometheusStackNormalRender|PrometheusNormalRender)$' \
   -benchmem -benchtime=1s -count=5
 ```

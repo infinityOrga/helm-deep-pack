@@ -17,7 +17,7 @@ running `helm-deep-pack` binary (`os.Executable()` -> `push_images`). That helpe
 carries the entire Helm SDK, the chart renderer, and the upgrade machinery even
 though pushing only needs the registry-transfer engine.
 
-Measured (release flags: `CGO_ENABLED=0 -trimpath -ldflags "-s -w"`):
+Measured (release flags: `CGO_ENABLED=1 -trimpath -ldflags "-s -w"`):
 
 - Full `helm-deep-pack`: ~42 MB
 - Push-only build (`internal/push` + `internal/pushspec` + `internal/validation`): ~7.2 MB

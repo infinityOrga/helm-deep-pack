@@ -11,7 +11,14 @@ builds:
     main: .
     binary: helm-deep-pack
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
+    overrides:
+      - goos: linux
+        goarch: arm64
+        env: &linuxArm64CgoEnv
+          - CGO_ENABLED=1
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
     flags:
       - -trimpath
     ldflags:
@@ -31,7 +38,11 @@ builds:
     main: ./cmd/pushimages
     binary: push_images
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
+    overrides:
+      - goos: linux
+        goarch: arm64
+        env: *linuxArm64CgoEnv
     flags:
       - -trimpath
     ldflags:

@@ -137,6 +137,28 @@ func TestStageForPlatform_DevBuildsHelperLocally(t *testing.T) {
 	}
 }
 
+func TestLocalHelperBuildEnvironment_UsesCgoTargetToolchain(t *testing.T) {
+	env := localHelperBuildEnvironment([]string{
+		"CGO_ENABLED=host-default",
+		"CC=host-gcc",
+		"CXX=host-g++",
+		"PATH=/usr/bin",
+	}, "linux", "arm64")
+
+	for key, want := range map[string]string{
+		"CGO_ENABLED": "1",
+		"GOOS":        "linux",
+		"GOARCH":      "arm64",
+		"CC":          "aarch64-linux-gnu-gcc",
+		"CXX":         "aarch64-linux-gnu-g++",
+		"PATH":        "/usr/bin",
+	} {
+		if got := environmentValue(env, key); got != want {
+			t.Errorf("environment value %s = %q, want %q", key, got, want)
+		}
+	}
+}
+
 func TestStageForPlatform_DevFallsBackToReleaseWhenLocalBuildFails(t *testing.T) {
 	restore := stubReleaseFetcher(t, "linux", "amd64", "release-helper")
 	defer restore()
@@ -224,6 +246,16 @@ func stubReleaseFetcher(t *testing.T, goos, goarch, payload string) func() {
 		fetchReleaseAssetBytes = originalFetch
 		parseChecksumsText = originalParse
 	}
+}
+
+func environmentValue(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
 }
 
 func buildTarGz(t *testing.T, name string, payload []byte) []byte {
