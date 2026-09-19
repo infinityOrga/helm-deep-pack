@@ -41,8 +41,9 @@ drifting to synonyms.
   associate an optional image with the smallest known set of false Helm boolean
   value paths. It is limited by the configured timeout and a 32-render safety
   cap for large charts. Attribution failure never removes the optional marker.
-- **Push engine** — `internal/push`: the registry-transfer logic (archive, probe,
-  interactive selection, concurrent push) shared by both the CLI `push` subcommand
-  and the standalone push binary.
+- **Push engine** — `internal/push.Engine`: the image-transfer module (archive,
+  probe, interactive selection, concurrent push) shared by both the CLI `push`
+  subcommand and the standalone push binary. Package-level functions are default
+  entrypoints backed by a new engine instance.
 - **Self-copy fallback** — Legacy/dev staging behavior where the push helper is a
   byte copy of the running CLI. No longer used by the pull staging path.

@@ -19,21 +19,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var fetchRemoteImage = remote.Image
-var writeLayout = layout.Write
-var fromLayoutPath = layout.FromPath
-var writeLayoutImage = func(path layout.Path, img v1.Image) error {
-	return path.WriteImage(img)
-}
-var appendLayoutImage = func(path layout.Path, img v1.Image) error {
-	return path.AppendImage(img)
-}
-
-func ArchiveImages(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, error) {
-	specs, _, err := archiveImages(ctx, images, outputDir, concurrency, strictArchivePolicy{}, status...)
-	return specs, err
-}
-
 type ArchiveFailure struct {
 	Image string
 	Err   error
@@ -41,13 +26,6 @@ type ArchiveFailure struct {
 
 func (f ArchiveFailure) Error() string {
 	return fmt.Sprintf("archive %s: %v", f.Image, f.Err)
-}
-
-// ArchiveImagesBestEffort archives every valid image it can fetch and returns
-// per-image failures separately. Setup failures (for example, an unusable OCI
-// layout) are returned as the function error.
-func ArchiveImagesBestEffort(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
-	return archiveImages(ctx, images, outputDir, concurrency, bestEffortArchivePolicy{}, status...)
 }
 
 type archivePolicy interface {
@@ -89,7 +67,7 @@ func (bestEffortArchivePolicy) recordFailure(image string, err error) (ArchiveFa
 	return ArchiveFailure{Image: image, Err: err}, true
 }
 
-func archiveImages(ctx context.Context, images []string, outputDir string, concurrency int, policy archivePolicy, status ...io.Writer) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
+func (e Engine) archiveImages(ctx context.Context, images []string, outputDir string, concurrency int, policy archivePolicy, status ...io.Writer) ([]pushspec.ArchiveSpec, []ArchiveFailure, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return nil, nil, fmt.Errorf("create output dir: %w", err)
 	}
@@ -105,7 +83,7 @@ func archiveImages(ctx context.Context, images []string, outputDir string, concu
 	defer progressTracker.Finish()
 
 	layoutRoot := filepath.Join(outputDir, pushspec.OCILayoutDirName())
-	layoutPath, createdLayout, err := openOrCreateLayout(layoutRoot)
+	layoutPath, createdLayout, err := e.openOrCreateLayout(layoutRoot)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open or create oci layout: %w", err)
 	}
@@ -121,7 +99,7 @@ func archiveImages(ctx context.Context, images []string, outputDir string, concu
 			progressTracker.Begin(specs[i].Image)
 			defer progressTracker.End(specs[i].Image)
 
-			digest, copyErr := copyImageToLayoutUsingGoContainerRegistry(groupCtx, specs[i].Image, layoutPath, &writeMu, progressTracker)
+			digest, copyErr := e.copyImageToLayoutUsingGoContainerRegistry(groupCtx, specs[i].Image, layoutPath, &writeMu, progressTracker)
 			if copyErr != nil {
 				failure, record := policy.recordFailure(specs[i].Image, copyErr)
 				if record {
@@ -164,13 +142,13 @@ func archiveImages(ctx context.Context, images []string, outputDir string, concu
 	return specs, failures, nil
 }
 
-func openOrCreateLayout(layoutRoot string) (layout.Path, bool, error) {
+func (e Engine) openOrCreateLayout(layoutRoot string) (layout.Path, bool, error) {
 	info, err := os.Stat(layoutRoot)
 	if err == nil {
 		if !info.IsDir() {
 			return "", false, fmt.Errorf("open oci image layout: %s is not a directory", layoutRoot)
 		}
-		path, openErr := fromLayoutPath(layoutRoot)
+		path, openErr := e.fromLayoutPath(layoutRoot)
 		if openErr != nil {
 			return "", false, fmt.Errorf("open oci image layout: %w", openErr)
 		}
@@ -180,20 +158,20 @@ func openOrCreateLayout(layoutRoot string) (layout.Path, bool, error) {
 		return "", false, fmt.Errorf("stat oci image layout: %w", err)
 	}
 
-	path, createErr := writeLayout(layoutRoot, empty.Index)
+	path, createErr := e.writeLayout(layoutRoot, empty.Index)
 	if createErr != nil {
 		return "", false, fmt.Errorf("create oci image layout: %w", createErr)
 	}
 	return path, true, nil
 }
 
-func copyImageToLayoutUsingGoContainerRegistry(ctx context.Context, image string, layoutPath layout.Path, writeMu *sync.Mutex, progressTracker *progress.Progress) (string, error) {
+func (e Engine) copyImageToLayoutUsingGoContainerRegistry(ctx context.Context, image string, layoutPath layout.Path, writeMu *sync.Mutex, progressTracker *progress.Progress) (string, error) {
 	ref, err := name.ParseReference(image)
 	if err != nil {
 		return "", fmt.Errorf("parse source image %q: %w", image, err)
 	}
 
-	img, err := fetchRemoteImage(ref, remote.WithContext(ctx))
+	img, err := e.fetchRemoteImage(ref, remote.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("fetch source image %q: %w", image, err)
 	}
@@ -216,13 +194,13 @@ func copyImageToLayoutUsingGoContainerRegistry(ctx context.Context, image string
 		return "", fmt.Errorf("resolve digest for image %q: %w", image, err)
 	}
 
-	if err := writeLayoutImage(layoutPath, newProgressImage(image, img, totalBytes, progressTracker)); err != nil {
+	if err := e.writeLayoutImage(layoutPath, newProgressImage(image, img, totalBytes, progressTracker)); err != nil {
 		return "", fmt.Errorf("write image %q blobs to oci layout: %w", image, err)
 	}
 
 	writeMu.Lock()
 	defer writeMu.Unlock()
-	if err := appendLayoutImage(layoutPath, img); err != nil {
+	if err := e.appendLayoutImage(layoutPath, img); err != nil {
 		return "", fmt.Errorf("append image %q to oci layout: %w", image, err)
 	}
 

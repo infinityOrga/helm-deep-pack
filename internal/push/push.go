@@ -31,14 +31,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var copyImageToRegistry = copyImageToRegistryUsingGoContainerRegistry
-var writeRemoteImage = remote.Write
-var loadLayoutImage = func(layoutPath layout.Path, hash v1.Hash) (v1.Image, error) {
-	return layoutPath.Image(hash)
-}
-var loadOCILayout = layout.FromPath
-var resolveExecutablePath = os.Executable
-
 type Options struct {
 	Registry          string
 	InputDir          string
@@ -49,13 +41,12 @@ type Options struct {
 	Out               io.Writer
 }
 
-func PushImages(ctx context.Context, opts Options, status ...io.Writer) error {
-	return pushImages(ctx, opts, newRegistryProbeClient(), status...)
-}
-
-func pushImages(ctx context.Context, opts Options, probeClient *http.Client, status ...io.Writer) error {
+func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.Client, status ...io.Writer) error {
 	if opts.Registry == "" {
-		resolved, err := promptForRegistry(opts.In, opts.Out)
+		if !e.isInteractive(opts.In, opts.Out) {
+			return errRegistryRequired
+		}
+		resolved, err := e.promptForRegistry(opts.In, opts.Out)
 		if err != nil {
 			return err
 		}
@@ -70,10 +61,10 @@ func pushImages(ctx context.Context, opts Options, probeClient *http.Client, sta
 	registryHost, _ := validation.SplitRegistryPath(opts.Registry)
 	if err := preflightRegistry(ctx, registryHost, opts.AllowInsecureHTTP, probeClient); err != nil {
 		var httpErr *plainHTTPRegistryError
-		if !errors.As(err, &httpErr) || opts.AllowInsecureHTTP || !isInteractive(opts.In, opts.Out) {
+		if !errors.As(err, &httpErr) || opts.AllowInsecureHTTP || !e.isInteractive(opts.In, opts.Out) {
 			return fmt.Errorf("preflight registry argument: %w", err)
 		}
-		confirmed, confirmErr := confirmInsecureHTTP(opts.In, opts.Out, registryHost)
+		confirmed, confirmErr := e.confirmInsecureHTTP(opts.In, opts.Out, registryHost)
 		if confirmErr != nil {
 			return fmt.Errorf("confirm insecure http: %w", confirmErr)
 		}
@@ -87,7 +78,7 @@ func pushImages(ctx context.Context, opts Options, probeClient *http.Client, sta
 	}
 	destRegistry := strings.TrimRight(opts.Registry, "/")
 
-	resolvedInputDir, err := resolvePushInputDir(opts.InputDir)
+	resolvedInputDir, err := e.resolvePushInputDir(opts.InputDir)
 	if err != nil {
 		return fmt.Errorf("resolve push input dir: %w", err)
 	}
@@ -101,7 +92,7 @@ func pushImages(ctx context.Context, opts Options, probeClient *http.Client, sta
 	if err != nil {
 		return fmt.Errorf("resolve oci image layout path: %w", err)
 	}
-	layoutPath, err := loadOCILayout(layoutDirPath)
+	layoutPath, err := e.loadOCILayout(layoutDirPath)
 	if err != nil {
 		return fmt.Errorf("load oci image layout: %w", err)
 	}
@@ -110,7 +101,10 @@ func pushImages(ctx context.Context, opts Options, probeClient *http.Client, sta
 	if opts.All {
 		selected = manifest.Images
 	} else {
-		chosen, proceed, selectErr := selectImagesToPush(ctx, opts, destRegistry, manifest.Images)
+		if !e.isInteractive(opts.In, opts.Out) {
+			return fmt.Errorf("interactive selection requires terminal input and output; re-run with --all to push every image non-interactively")
+		}
+		chosen, proceed, selectErr := e.selectImagesToPush(ctx, opts, destRegistry, manifest.Images)
 		if selectErr != nil {
 			return selectErr
 		}
@@ -120,16 +114,12 @@ func pushImages(ctx context.Context, opts Options, probeClient *http.Client, sta
 		selected = chosen
 	}
 
-	return pushSpecs(ctx, destRegistry, layoutPath, selected, opts.Concurrency, opts.AllowInsecureHTTP, status...)
+	return e.pushSpecs(ctx, destRegistry, layoutPath, selected, opts.Concurrency, opts.AllowInsecureHTTP, status...)
 }
 
 // selectImagesToPush runs the interactive chooser and conflict confirmation.
 // proceed=false means stop without pushing.
 func selectImagesToPush(ctx context.Context, opts Options, destRegistry string, specs []pushspec.ArchiveSpec) (selected []pushspec.ArchiveSpec, proceed bool, err error) {
-	if opts.In == nil || !terminal.IsReader(opts.In) || opts.Out == nil || !terminal.IsWriter(opts.Out) {
-		return nil, false, fmt.Errorf("interactive selection requires terminal input and output; re-run with --all to push every image non-interactively")
-	}
-
 	classified := classifyImages(ctx, destRegistry, opts.AllowInsecureHTTP, specs)
 
 	for _, item := range classified {
@@ -218,7 +208,7 @@ func preflightRegistry(ctx context.Context, registry string, allowInsecureHTTP b
 	return nil
 }
 
-func pushSpecs(ctx context.Context, registry string, layoutPath layout.Path, specs []pushspec.ArchiveSpec, concurrency int, allowInsecureHTTP bool, status ...io.Writer) error {
+func (e Engine) pushSpecs(ctx context.Context, registry string, layoutPath layout.Path, specs []pushspec.ArchiveSpec, concurrency int, allowInsecureHTTP bool, status ...io.Writer) error {
 	progressTracker := progress.New(progress.StatusWriter(status...), "pushing", len(specs))
 	defer progressTracker.Finish()
 
@@ -230,7 +220,7 @@ func pushSpecs(ctx context.Context, registry string, layoutPath layout.Path, spe
 			progressTracker.Begin(spec.Image)
 			defer progressTracker.End(spec.Image)
 
-			if err := copyImageToRegistry(groupCtx, registry, allowInsecureHTTP, layoutPath, spec.Image, spec.Target, spec.OCIDigest); err != nil {
+			if err := e.pushImageToRegistry(groupCtx, registry, allowInsecureHTTP, layoutPath, spec.Image, spec.Target, spec.OCIDigest); err != nil {
 				return fmt.Errorf("push %s: %w", spec.Image, err)
 			}
 			return nil
@@ -243,12 +233,19 @@ func pushSpecs(ctx context.Context, registry string, layoutPath layout.Path, spe
 	return nil
 }
 
-func resolvePushInputDir(inputDir string) (string, error) {
+func (e Engine) pushImageToRegistry(ctx context.Context, registry string, allowInsecureHTTP bool, layoutPath layout.Path, sourceImage, target, ociDigest string) error {
+	if e.copyImageToRegistry != nil {
+		return e.copyImageToRegistry(ctx, registry, allowInsecureHTTP, layoutPath, sourceImage, target, ociDigest)
+	}
+	return e.copyImageToRegistryUsingGoContainerRegistry(ctx, registry, allowInsecureHTTP, layoutPath, sourceImage, target, ociDigest)
+}
+
+func (e Engine) resolvePushInputDir(inputDir string) (string, error) {
 	if inputDir != "" {
 		return inputDir, nil
 	}
 
-	executable, err := resolveExecutablePath()
+	executable, err := e.resolveExecutablePath()
 	if err != nil {
 		return "", fmt.Errorf("resolve executable path: %w", err)
 	}
@@ -449,7 +446,7 @@ func confirmInsecureHTTP(in io.Reader, out io.Writer, registry string) (bool, er
 	}
 }
 
-func copyImageToRegistryUsingGoContainerRegistry(ctx context.Context, registry string, allowInsecureHTTP bool, layoutPath layout.Path, sourceImage, target, ociDigest string) error {
+func (e Engine) copyImageToRegistryUsingGoContainerRegistry(ctx context.Context, registry string, allowInsecureHTTP bool, layoutPath layout.Path, sourceImage, target, ociDigest string) error {
 	if _, err := name.ParseReference(sourceImage); err != nil {
 		return fmt.Errorf("parse source image %q: %w", sourceImage, err)
 	}
@@ -461,7 +458,7 @@ func copyImageToRegistryUsingGoContainerRegistry(ctx context.Context, registry s
 
 	registry = strings.TrimRight(registry, "/")
 
-	img, err := loadLayoutImage(layoutPath, hash)
+	img, err := e.loadLayoutImage(layoutPath, hash)
 	if err != nil {
 		return fmt.Errorf("load image %q from oci layout: %w", sourceImage, err)
 	}
@@ -475,7 +472,7 @@ func copyImageToRegistryUsingGoContainerRegistry(ctx context.Context, registry s
 		return fmt.Errorf("parse destination reference %q: %w", registry+"/"+target, err)
 	}
 
-	if err := writeRemoteImage(destRef, img, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain)); err != nil {
+	if err := e.writeRemoteImage(destRef, img, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain)); err != nil {
 		if looksLikeWebsite(err) {
 			return fmt.Errorf("registry %q does not look like a container registry", registry)
 		}

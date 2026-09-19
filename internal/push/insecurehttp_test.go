@@ -60,18 +60,14 @@ func TestConfirmInsecureHTTP(t *testing.T) {
 	}
 }
 
-// forceInteractive overrides the isInteractive seam so the interactive confirm
-// branch runs without a real terminal, restoring it after the test.
-func forceInteractive(t *testing.T) {
+// forceInteractive overrides the engine's terminal seam so the interactive
+// confirm branch runs without a real terminal.
+func forceInteractive(t *testing.T, engine *Engine) {
 	t.Helper()
-	original := isInteractive
-	isInteractive = func(io.Reader, io.Writer) bool { return true }
-	t.Cleanup(func() { isInteractive = original })
+	engine.isInteractive = func(io.Reader, io.Writer) bool { return true }
 }
 
 func TestPushImagesInteractiveAcceptInsecureHTTPSwitchesToHTTP(t *testing.T) {
-	forceInteractive(t)
-
 	var schemes []string
 	probeClient := withRegistryProbeClient(t, func(req *http.Request) (*http.Response, error) {
 		schemes = append(schemes, req.URL.Scheme)
@@ -80,9 +76,11 @@ func TestPushImagesInteractiveAcceptInsecureHTTPSwitchesToHTTP(t *testing.T) {
 		}
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
+	engine := newPushTestEngine(probeClient)
+	forceInteractive(t, &engine)
 
 	out := new(bytes.Buffer)
-	err := pushImagesForTest(t, probeClient, Options{
+	err := pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "registry.local:5000",
 		InputDir:    t.TempDir(),
 		Concurrency: 1,
@@ -106,14 +104,14 @@ func TestPushImagesInteractiveAcceptInsecureHTTPSwitchesToHTTP(t *testing.T) {
 }
 
 func TestPushImagesInteractiveDeclineInsecureHTTPReturnsError(t *testing.T) {
-	forceInteractive(t)
-
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("Get \"https://registry.local:5000/v2/\": http: server gave HTTP response to HTTPS client")
 	})
+	engine := newPushTestEngine(probeClient)
+	forceInteractive(t, &engine)
 
 	out := new(bytes.Buffer)
-	err := pushImagesForTest(t, probeClient, Options{
+	err := pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "registry.local:5000",
 		InputDir:    t.TempDir(),
 		Concurrency: 1,

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -63,34 +64,39 @@ func websiteProbeResponse(status int, contentType, body string) *http.Response {
 	}
 }
 
+func newPushTestEngine(client *http.Client) Engine {
+	engine := NewEngine()
+	engine.probeClient = client
+	return engine
+}
+
 func pushImagesForTest(t *testing.T, client *http.Client, opts Options, status ...io.Writer) error {
 	t.Helper()
-	return pushImages(context.Background(), opts, client, status...)
+	return pushImagesWithEngineForTest(t, newPushTestEngine(client), opts, status...)
+}
+
+func pushImagesWithEngineForTest(t *testing.T, engine Engine, opts Options, status ...io.Writer) error {
+	t.Helper()
+	return engine.pushImages(context.Background(), opts, engine.probeClient, status...)
 }
 
 func TestPushImagesUsesManifestDigests(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
-
-	original := copyImageToRegistry
-	originalLoadLayout := loadOCILayout
-	originalResolveExec := resolveExecutablePath
-	defer func() {
-		copyImageToRegistry = original
-		loadOCILayout = originalLoadLayout
-		resolveExecutablePath = originalResolveExec
-	}()
-
+	engine := newPushTestEngine(probeClient)
+	var callsMu sync.Mutex
 	var calls []string
-	copyImageToRegistry = func(_ context.Context, registry string, _ bool, _ layout.Path, sourceImage, target, ociDigest string) error {
+	engine.copyImageToRegistry = func(_ context.Context, registry string, _ bool, _ layout.Path, sourceImage, target, ociDigest string) error {
+		callsMu.Lock()
+		defer callsMu.Unlock()
 		calls = append(calls, registry+"|"+sourceImage+"|"+target+"|"+ociDigest)
 		return nil
 	}
-	loadOCILayout = func(path string) (layout.Path, error) {
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	resolveExecutablePath = func() (string, error) {
+	engine.resolveExecutablePath = func() (string, error) {
 		return "/unused/helper", nil
 	}
 
@@ -115,7 +121,7 @@ func TestPushImagesUsesManifestDigests(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := pushImagesForTest(t, probeClient, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 4, All: true}); err != nil {
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 4, All: true}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
 	}
 
@@ -156,25 +162,16 @@ func TestPushImagesUsesRegistryNamespacePathAsDestinationPrefix(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
-
-	original := copyImageToRegistry
-	originalLoadLayout := loadOCILayout
-	originalResolveExec := resolveExecutablePath
-	defer func() {
-		copyImageToRegistry = original
-		loadOCILayout = originalLoadLayout
-		resolveExecutablePath = originalResolveExec
-	}()
-
+	engine := newPushTestEngine(probeClient)
 	var calledRegistry string
-	copyImageToRegistry = func(_ context.Context, registry string, _ bool, _ layout.Path, _, _, _ string) error {
+	engine.copyImageToRegistry = func(_ context.Context, registry string, _ bool, _ layout.Path, _, _, _ string) error {
 		calledRegistry = registry
 		return nil
 	}
-	loadOCILayout = func(path string) (layout.Path, error) {
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	resolveExecutablePath = func() (string, error) {
+	engine.resolveExecutablePath = func() (string, error) {
 		return "/unused/helper", nil
 	}
 
@@ -191,11 +188,11 @@ func TestPushImagesUsesRegistryNamespacePathAsDestinationPrefix(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := pushImagesForTest(t, probeClient, Options{Registry: "registry.local:5000/team/sub", InputDir: dir, Concurrency: 1, All: true}); err != nil {
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000/team/sub", InputDir: dir, Concurrency: 1, All: true}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
 	}
 	if calledRegistry != "registry.local:5000/team/sub" {
-		t.Fatalf("copyImageToRegistry registry = %q, want %q", calledRegistry, "registry.local:5000/team/sub")
+		t.Fatalf("engine.copyImageToRegistry registry = %q, want %q", calledRegistry, "registry.local:5000/team/sub")
 	}
 }
 
@@ -203,17 +200,8 @@ func TestPushImagesResolvesDefaultInputDir(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
-
-	original := copyImageToRegistry
-	originalLoadLayout := loadOCILayout
-	originalResolveExec := resolveExecutablePath
-	defer func() {
-		copyImageToRegistry = original
-		loadOCILayout = originalLoadLayout
-		resolveExecutablePath = originalResolveExec
-	}()
-
-	copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, _, _ string) error {
+	engine := newPushTestEngine(probeClient)
+	engine.copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, _, _ string) error {
 		return nil
 	}
 
@@ -223,12 +211,12 @@ func TestPushImagesResolvesDefaultInputDir(t *testing.T) {
 	if err := os.MkdirAll(helperDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	resolveExecutablePath = func() (string, error) {
+	engine.resolveExecutablePath = func() (string, error) {
 		return filepath.Join(helperDir, "push_images"), nil
 	}
 
 	writtenLayoutPath := ""
-	loadOCILayout = func(path string) (layout.Path, error) {
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		writtenLayoutPath = path
 		return layout.Path(path), nil
 	}
@@ -245,7 +233,7 @@ func TestPushImagesResolvesDefaultInputDir(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := pushImagesForTest(t, probeClient, Options{Registry: "registry.local:5000", InputDir: "", Concurrency: 2, All: true}); err != nil {
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: "", Concurrency: 2, All: true}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
 	}
 
@@ -259,17 +247,8 @@ func TestPushImagesFallsBackToWorkingDirWhenExecutableDirHasNoManifest(t *testin
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
-
-	original := copyImageToRegistry
-	originalLoadLayout := loadOCILayout
-	originalResolveExec := resolveExecutablePath
-	defer func() {
-		copyImageToRegistry = original
-		loadOCILayout = originalLoadLayout
-		resolveExecutablePath = originalResolveExec
-	}()
-
-	copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, _, _ string) error {
+	engine := newPushTestEngine(probeClient)
+	engine.copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, _, _ string) error {
 		return nil
 	}
 
@@ -284,12 +263,12 @@ func TestPushImagesFallsBackToWorkingDirWhenExecutableDirHasNoManifest(t *testin
 	}
 	t.Chdir(workingDir)
 
-	resolveExecutablePath = func() (string, error) {
+	engine.resolveExecutablePath = func() (string, error) {
 		return filepath.Join(helperDir, "push_images"), nil
 	}
 
 	writtenLayoutPath := ""
-	loadOCILayout = func(path string) (layout.Path, error) {
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		writtenLayoutPath = path
 		return layout.Path(path), nil
 	}
@@ -306,7 +285,7 @@ func TestPushImagesFallsBackToWorkingDirWhenExecutableDirHasNoManifest(t *testin
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := pushImagesForTest(t, probeClient, Options{Registry: "registry.local:5000", InputDir: "", Concurrency: 2, All: true}); err != nil {
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: "", Concurrency: 2, All: true}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
 	}
 
@@ -317,26 +296,20 @@ func TestPushImagesFallsBackToWorkingDirWhenExecutableDirHasNoManifest(t *testin
 }
 
 func TestCopyImageToRegistrySupportsDigestReferences(t *testing.T) {
-	originalLoad := loadLayoutImage
-	originalWrite := writeRemoteImage
-	defer func() {
-		loadLayoutImage = originalLoad
-		writeRemoteImage = originalWrite
-	}()
-
+	engine := NewEngine()
 	var gotHash v1.Hash
 	var gotDestRef name.Reference
-	loadLayoutImage = func(_ layout.Path, hash v1.Hash) (v1.Image, error) {
+	engine.loadLayoutImage = func(_ layout.Path, hash v1.Hash) (v1.Image, error) {
 		gotHash = hash
 		return nil, nil
 	}
 
-	writeRemoteImage = func(ref name.Reference, _ v1.Image, _ ...remote.Option) error {
+	engine.writeRemoteImage = func(ref name.Reference, _ v1.Image, _ ...remote.Option) error {
 		gotDestRef = ref
 		return nil
 	}
 
-	if err := copyImageToRegistryUsingGoContainerRegistry(
+	if err := engine.copyImageToRegistryUsingGoContainerRegistry(
 		context.Background(),
 		"registry.local:5000",
 		false,
@@ -345,7 +318,7 @@ func TestCopyImageToRegistrySupportsDigestReferences(t *testing.T) {
 		"example/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	); err != nil {
-		t.Fatalf("copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
+		t.Fatalf("engine.copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
 	}
 
 	if gotHash.String() != "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
@@ -357,21 +330,15 @@ func TestCopyImageToRegistrySupportsDigestReferences(t *testing.T) {
 }
 
 func TestCopyImageToRegistryReportsWebsiteLikeRegistryErrors(t *testing.T) {
-	originalLoad := loadLayoutImage
-	originalWrite := writeRemoteImage
-	defer func() {
-		loadLayoutImage = originalLoad
-		writeRemoteImage = originalWrite
-	}()
-
-	loadLayoutImage = func(_ layout.Path, _ v1.Hash) (v1.Image, error) {
+	engine := NewEngine()
+	engine.loadLayoutImage = func(_ layout.Path, _ v1.Hash) (v1.Image, error) {
 		return nil, nil
 	}
-	writeRemoteImage = func(_ name.Reference, _ v1.Image, _ ...remote.Option) error {
+	engine.writeRemoteImage = func(_ name.Reference, _ v1.Image, _ ...remote.Option) error {
 		return fmt.Errorf(`unexpected media type "text/html"`)
 	}
 
-	err := copyImageToRegistryUsingGoContainerRegistry(
+	err := engine.copyImageToRegistryUsingGoContainerRegistry(
 		context.Background(),
 		"example.com",
 		false,
@@ -381,7 +348,7 @@ func TestCopyImageToRegistryReportsWebsiteLikeRegistryErrors(t *testing.T) {
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	)
 	if err == nil {
-		t.Fatal("copyImageToRegistryUsingGoContainerRegistry() error = nil, want website error")
+		t.Fatal("engine.copyImageToRegistryUsingGoContainerRegistry() error = nil, want website error")
 	}
 	if !strings.Contains(err.Error(), "does not look like a container registry") {
 		t.Fatalf("error = %v", err)
@@ -389,21 +356,15 @@ func TestCopyImageToRegistryReportsWebsiteLikeRegistryErrors(t *testing.T) {
 }
 
 func TestCopyImageToRegistryPreservesRegistry404Errors(t *testing.T) {
-	originalLoad := loadLayoutImage
-	originalWrite := writeRemoteImage
-	defer func() {
-		loadLayoutImage = originalLoad
-		writeRemoteImage = originalWrite
-	}()
-
-	loadLayoutImage = func(_ layout.Path, _ v1.Hash) (v1.Image, error) {
+	engine := NewEngine()
+	engine.loadLayoutImage = func(_ layout.Path, _ v1.Hash) (v1.Image, error) {
 		return nil, nil
 	}
-	writeRemoteImage = func(_ name.Reference, _ v1.Image, _ ...remote.Option) error {
+	engine.writeRemoteImage = func(_ name.Reference, _ v1.Image, _ ...remote.Option) error {
 		return fmt.Errorf("unexpected status code 404 Not Found")
 	}
 
-	err := copyImageToRegistryUsingGoContainerRegistry(
+	err := engine.copyImageToRegistryUsingGoContainerRegistry(
 		context.Background(),
 		"registry.local:5000",
 		false,
@@ -413,7 +374,7 @@ func TestCopyImageToRegistryPreservesRegistry404Errors(t *testing.T) {
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	)
 	if err == nil {
-		t.Fatal("copyImageToRegistryUsingGoContainerRegistry() error = nil, want registry 404 error")
+		t.Fatal("engine.copyImageToRegistryUsingGoContainerRegistry() error = nil, want registry 404 error")
 	}
 	if strings.Contains(err.Error(), "does not look like a container registry") {
 		t.Fatalf("registry 404 was misclassified as website: %v", err)
@@ -427,23 +388,14 @@ func TestPushImagesReportsProgress(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
-
-	original := copyImageToRegistry
-	originalLoadLayout := loadOCILayout
-	originalResolveExec := resolveExecutablePath
-	defer func() {
-		copyImageToRegistry = original
-		loadOCILayout = originalLoadLayout
-		resolveExecutablePath = originalResolveExec
-	}()
-
-	copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, _, _ string) error {
+	engine := newPushTestEngine(probeClient)
+	engine.copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, _, _ string) error {
 		return nil
 	}
-	loadOCILayout = func(path string) (layout.Path, error) {
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	resolveExecutablePath = func() (string, error) {
+	engine.resolveExecutablePath = func() (string, error) {
 		return "/unused/helper", nil
 	}
 
@@ -461,7 +413,7 @@ func TestPushImagesReportsProgress(t *testing.T) {
 	}
 
 	status := new(bytes.Buffer)
-	if err := pushImagesForTest(t, probeClient, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1, All: true}, status); err != nil {
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1, All: true}, status); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
 	}
 
@@ -481,24 +433,15 @@ func TestPushImagesInteractiveRequiresTerminal(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
-
-	original := copyImageToRegistry
-	originalLoadLayout := loadOCILayout
-	originalResolveExec := resolveExecutablePath
-	defer func() {
-		copyImageToRegistry = original
-		loadOCILayout = originalLoadLayout
-		resolveExecutablePath = originalResolveExec
-	}()
-
+	engine := newPushTestEngine(probeClient)
 	// Mock network operations so they don't run
-	copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, _, _ string) error {
+	engine.copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, _, _ string) error {
 		return nil
 	}
-	loadOCILayout = func(path string) (layout.Path, error) {
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	resolveExecutablePath = func() (string, error) {
+	engine.resolveExecutablePath = func() (string, error) {
 		return "/unused/helper", nil
 	}
 
@@ -519,7 +462,7 @@ func TestPushImagesInteractiveRequiresTerminal(t *testing.T) {
 	}
 
 	// Use strings.NewReader which is not a terminal
-	err = pushImagesForTest(t, probeClient, Options{
+	err = pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "registry.local:5000",
 		InputDir:    dir,
 		Concurrency: 1,
@@ -533,6 +476,75 @@ func TestPushImagesInteractiveRequiresTerminal(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "requires terminal input and output") {
 		t.Fatalf("PushImages() error = %v, want message containing 'requires terminal input and output'", err)
+	}
+}
+
+func TestEngineUsesTerminalSeamForRegistryPrompt(t *testing.T) {
+	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
+		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
+	})
+	engine := newPushTestEngine(probeClient)
+	engine.isInteractive = func(io.Reader, io.Writer) bool { return true }
+
+	err := pushImagesWithEngineForTest(t, engine, Options{
+		InputDir:    t.TempDir(),
+		Concurrency: 1,
+		All:         true,
+		In:          strings.NewReader("registry.local:5000\n"),
+		Out:         &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("PushImages() error = nil, want missing manifest error")
+	}
+	if strings.Contains(err.Error(), "registry argument is required") {
+		t.Fatalf("PushImages() ignored Engine.isInteractive override: %v", err)
+	}
+	if !strings.Contains(err.Error(), "read push manifest") {
+		t.Fatalf("PushImages() error = %v, want missing manifest error after registry prompt", err)
+	}
+}
+
+func TestEngineUsesTerminalSeamForImageSelection(t *testing.T) {
+	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
+		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
+	})
+	engine := newPushTestEngine(probeClient)
+	engine.isInteractive = func(io.Reader, io.Writer) bool { return false }
+	selectionCalled := false
+	engine.selectImagesToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec) ([]pushspec.ArchiveSpec, bool, error) {
+		selectionCalled = true
+		return nil, false, nil
+	}
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
+		return layout.Path(path), nil
+	}
+
+	dir := t.TempDir()
+	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{{
+		Image:     "busybox:1.36",
+		Target:    "library/busybox:1.36",
+		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}})
+	if err != nil {
+		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err = pushImagesWithEngineForTest(t, engine, Options{
+		Registry:    "registry.local:5000",
+		InputDir:    dir,
+		Concurrency: 1,
+		All:         false,
+		In:          strings.NewReader(""),
+		Out:         &bytes.Buffer{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires terminal input and output") {
+		t.Fatalf("PushImages() error = %v, want terminal selection error", err)
+	}
+	if selectionCalled {
+		t.Fatal("PushImages() called image selection after Engine.isInteractive rejected the streams")
 	}
 }
 
@@ -597,12 +609,9 @@ func TestPushImagesAcceptsRegistryServingHTMLErrorBody(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return resp, nil
 	})
+	engine := newPushTestEngine(probeClient)
 
-	originalLoadLayout := loadOCILayout
-	defer func() {
-		loadOCILayout = originalLoadLayout
-	}()
-	loadOCILayout = func(path string) (layout.Path, error) {
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
 
@@ -619,7 +628,7 @@ func TestPushImagesAcceptsRegistryServingHTMLErrorBody(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err = pushImagesForTest(t, probeClient, Options{
+	err = pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "quay.io",
 		InputDir:    dir,
 		Concurrency: 1,
@@ -642,12 +651,9 @@ func TestPushImagesAcceptsRegistryPreflightBeforeSelection(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusUnauthorized, "application/json", ""), nil
 	})
+	engine := newPushTestEngine(probeClient)
 
-	originalLoadLayout := loadOCILayout
-	defer func() {
-		loadOCILayout = originalLoadLayout
-	}()
-	loadOCILayout = func(path string) (layout.Path, error) {
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
 
@@ -664,7 +670,7 @@ func TestPushImagesAcceptsRegistryPreflightBeforeSelection(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err = pushImagesForTest(t, probeClient, Options{
+	err = pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "registry.local:5000",
 		InputDir:    dir,
 		Concurrency: 1,
@@ -703,24 +709,18 @@ func TestPushImagesPreflightUsesRegistryHostWithoutNamespacePath(t *testing.T) {
 }
 
 func TestCopyImageToRegistryAllowInsecureHTTPUsesHTTPReference(t *testing.T) {
-	originalLoad := loadLayoutImage
-	originalWrite := writeRemoteImage
-	defer func() {
-		loadLayoutImage = originalLoad
-		writeRemoteImage = originalWrite
-	}()
-
-	loadLayoutImage = func(_ layout.Path, _ v1.Hash) (v1.Image, error) {
+	engine := NewEngine()
+	engine.loadLayoutImage = func(_ layout.Path, _ v1.Hash) (v1.Image, error) {
 		return nil, nil
 	}
 
 	var gotScheme string
-	writeRemoteImage = func(ref name.Reference, _ v1.Image, _ ...remote.Option) error {
+	engine.writeRemoteImage = func(ref name.Reference, _ v1.Image, _ ...remote.Option) error {
 		gotScheme = ref.Context().Scheme()
 		return nil
 	}
 
-	if err := copyImageToRegistryUsingGoContainerRegistry(
+	if err := engine.copyImageToRegistryUsingGoContainerRegistry(
 		context.Background(),
 		"registry.local:5000",
 		true,
@@ -729,7 +729,7 @@ func TestCopyImageToRegistryAllowInsecureHTTPUsesHTTPReference(t *testing.T) {
 		"example/api:v1",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	); err != nil {
-		t.Fatalf("copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
+		t.Fatalf("engine.copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
 	}
 	if gotScheme != "http" {
 		t.Fatalf("destination reference scheme = %q, want %q", gotScheme, "http")
@@ -799,12 +799,9 @@ func TestPushImagesRejectsManifestLayoutDirTraversal(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
+	engine := newPushTestEngine(probeClient)
 
-	originalResolveExec := resolveExecutablePath
-	defer func() {
-		resolveExecutablePath = originalResolveExec
-	}()
-	resolveExecutablePath = func() (string, error) {
+	engine.resolveExecutablePath = func() (string, error) {
 		return "/unused/helper", nil
 	}
 
@@ -827,7 +824,7 @@ func TestPushImagesRejectsManifestLayoutDirTraversal(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err = pushImagesForTest(t, probeClient, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1, All: true})
+	err = pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1, All: true})
 	if err == nil {
 		t.Fatal("PushImages() error = nil, want layoutDir traversal error")
 	}
@@ -840,12 +837,9 @@ func TestPushImagesRejectsManifestLayoutDirAbsolutePath(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
+	engine := newPushTestEngine(probeClient)
 
-	originalResolveExec := resolveExecutablePath
-	defer func() {
-		resolveExecutablePath = originalResolveExec
-	}()
-	resolveExecutablePath = func() (string, error) {
+	engine.resolveExecutablePath = func() (string, error) {
 		return "/unused/helper", nil
 	}
 
@@ -868,7 +862,7 @@ func TestPushImagesRejectsManifestLayoutDirAbsolutePath(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err = pushImagesForTest(t, probeClient, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1, All: true})
+	err = pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1, All: true})
 	if err == nil {
 		t.Fatal("PushImages() error = nil, want absolute layoutDir error")
 	}

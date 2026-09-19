@@ -59,6 +59,10 @@ Tests replace these fields to run workflows without Helm, registry, or network
 dependencies. Preserve the fields as seams; replace them only when the workflow
 contract itself changes.
 
+`push.Engine` owns the function-field collaborators for OCI layout, registry, and
+interactive transfer operations. Tests create a fresh `push.NewEngine()` and
+replace fields on that instance; do not reintroduce package-level mutable seams.
+
 ## Implementation rules
 
 ### Commands and validation

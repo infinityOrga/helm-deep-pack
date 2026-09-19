@@ -18,20 +18,8 @@ import (
 )
 
 func TestArchiveImagesCreatesDigestSpecs(t *testing.T) {
-	originalFetch := fetchRemoteImage
-	originalWriteLayout := writeLayout
-	originalFromLayout := fromLayoutPath
-	originalAppend := appendLayoutImage
-	originalWrite := writeLayoutImage
-	defer func() {
-		fetchRemoteImage = originalFetch
-		writeLayout = originalWriteLayout
-		fromLayoutPath = originalFromLayout
-		appendLayoutImage = originalAppend
-		writeLayoutImage = originalWrite
-	}()
-
-	fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
+	engine := NewEngine()
+	engine.fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
 		return fakeImageWithDigest(t, map[string]string{
 			"quay.io/example/api:v1": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"busybox:1.36":           "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -39,22 +27,22 @@ func TestArchiveImagesCreatesDigestSpecs(t *testing.T) {
 	}
 
 	var layoutPath string
-	writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
+	engine.writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
 		layoutPath = path
 		return layout.Path(path), nil
 	}
-	fromLayoutPath = func(path string) (layout.Path, error) {
+	engine.fromLayoutPath = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
 
 	var appended int
-	writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
-	appendLayoutImage = func(_ layout.Path, _ v1.Image) error {
+	engine.writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+	engine.appendLayoutImage = func(_ layout.Path, _ v1.Image) error {
 		appended++
 		return nil
 	}
 
-	specs, err := ArchiveImages(context.Background(), []string{"quay.io/example/api:v1", "busybox:1.36"}, t.TempDir(), 4)
+	specs, err := engine.ArchiveImages(context.Background(), []string{"quay.io/example/api:v1", "busybox:1.36"}, t.TempDir(), 4)
 	if err != nil {
 		t.Fatalf("ArchiveImages() error = %v", err)
 	}
@@ -74,62 +62,42 @@ func TestArchiveImagesCreatesDigestSpecs(t *testing.T) {
 }
 
 func TestArchiveImagesFailsOnCopyError(t *testing.T) {
-	originalFetch := fetchRemoteImage
-	originalWriteLayout := writeLayout
-	originalFromLayout := fromLayoutPath
-	defer func() {
-		fetchRemoteImage = originalFetch
-		writeLayout = originalWriteLayout
-		fromLayoutPath = originalFromLayout
-	}()
-
-	writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
+	engine := NewEngine()
+	engine.writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	fromLayoutPath = func(path string) (layout.Path, error) {
+	engine.fromLayoutPath = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
 
-	fetchRemoteImage = func(_ name.Reference, _ ...remote.Option) (v1.Image, error) {
+	engine.fetchRemoteImage = func(_ name.Reference, _ ...remote.Option) (v1.Image, error) {
 		return nil, errors.New("boom")
 	}
 
-	_, err := ArchiveImages(context.Background(), []string{"busybox:1.36"}, t.TempDir(), 1)
+	_, err := engine.ArchiveImages(context.Background(), []string{"busybox:1.36"}, t.TempDir(), 1)
 	if err == nil {
 		t.Fatal("ArchiveImages() error = nil, want error")
 	}
 }
 
 func TestArchiveImagesBestEffortReturnsSuccessfulSpecsAndFailures(t *testing.T) {
-	originalFetch := fetchRemoteImage
-	originalWriteLayout := writeLayout
-	originalFromLayout := fromLayoutPath
-	originalAppend := appendLayoutImage
-	originalWrite := writeLayoutImage
-	defer func() {
-		fetchRemoteImage = originalFetch
-		writeLayout = originalWriteLayout
-		fromLayoutPath = originalFromLayout
-		appendLayoutImage = originalAppend
-		writeLayoutImage = originalWrite
-	}()
-
-	fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
+	engine := NewEngine()
+	engine.fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
 		if ref.String() == "quay.io/example/missing:v1" {
 			return nil, errors.New("image unavailable")
 		}
 		return fakeImageWithDigest(t, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), nil
 	}
-	writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
+	engine.writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	fromLayoutPath = func(path string) (layout.Path, error) {
+	engine.fromLayoutPath = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
-	appendLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+	engine.writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+	engine.appendLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
 
-	specs, failures, err := ArchiveImagesBestEffort(context.Background(), []string{
+	specs, failures, err := engine.ArchiveImagesBestEffort(context.Background(), []string{
 		"quay.io/example/missing:v1",
 		"quay.io/example/available:v1",
 	}, t.TempDir(), 2)
@@ -148,36 +116,24 @@ func TestArchiveImagesBestEffortReturnsSuccessfulSpecsAndFailures(t *testing.T) 
 }
 
 func TestArchiveImagesSupportsDigestReferences(t *testing.T) {
-	originalFetch := fetchRemoteImage
-	originalWriteLayout := writeLayout
-	originalFromLayout := fromLayoutPath
-	originalAppend := appendLayoutImage
-	originalWrite := writeLayoutImage
-	defer func() {
-		fetchRemoteImage = originalFetch
-		writeLayout = originalWriteLayout
-		fromLayoutPath = originalFromLayout
-		appendLayoutImage = originalAppend
-		writeLayoutImage = originalWrite
-	}()
-
+	engine := NewEngine()
 	var gotRef name.Reference
-	fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
+	engine.fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
 		gotRef = ref
 		return fakeImageWithDigest(t, "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"), nil
 	}
-	writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
+	engine.writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	fromLayoutPath = func(path string) (layout.Path, error) {
+	engine.fromLayoutPath = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
-	appendLayoutImage = func(_ layout.Path, _ v1.Image) error {
+	engine.writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+	engine.appendLayoutImage = func(_ layout.Path, _ v1.Image) error {
 		return nil
 	}
 
-	specs, err := ArchiveImages(context.Background(), []string{"quay.io/example/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, t.TempDir(), 2)
+	specs, err := engine.ArchiveImages(context.Background(), []string{"quay.io/example/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, t.TempDir(), 2)
 	if err != nil {
 		t.Fatalf("ArchiveImages() error = %v", err)
 	}
@@ -191,43 +147,30 @@ func TestArchiveImagesSupportsDigestReferences(t *testing.T) {
 }
 
 func TestArchiveImagesAppendsToExistingLayout(t *testing.T) {
-	originalFetch := fetchRemoteImage
-	originalWriteLayout := writeLayout
-	originalFromLayout := fromLayoutPath
-	originalAppend := appendLayoutImage
-	originalWrite := writeLayoutImage
-	defer func() {
-		fetchRemoteImage = originalFetch
-		writeLayout = originalWriteLayout
-		fromLayoutPath = originalFromLayout
-		appendLayoutImage = originalAppend
-		writeLayoutImage = originalWrite
-	}()
-
-	fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
+	engine := NewEngine()
+	engine.fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
 		return fakeImageWithDigest(t, map[string]string{
 			"busybox:1.36": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}[ref.String()]), nil
 	}
 
 	writeCalled := false
-	writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
+	engine.writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
 		writeCalled = true
 		return layout.Path(path), nil
 	}
-	fromLayoutPath = func(path string) (layout.Path, error) {
+	engine.fromLayoutPath = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
-	writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
-	appendLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+	engine.writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+	engine.appendLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
 
 	out := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(out, pushspec.OCILayoutDirName()), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	specs, err := ArchiveImages(context.Background(), []string{"busybox:1.36"}, out, 1)
+	specs, err := engine.ArchiveImages(context.Background(), []string{"busybox:1.36"}, out, 1)
 	if err != nil {
 		t.Fatalf("ArchiveImages() error = %v", err)
 	}
@@ -240,38 +183,26 @@ func TestArchiveImagesAppendsToExistingLayout(t *testing.T) {
 }
 
 func TestArchiveImagesReportsProgress(t *testing.T) {
-	originalFetch := fetchRemoteImage
-	originalWriteLayout := writeLayout
-	originalFromLayout := fromLayoutPath
-	originalAppend := appendLayoutImage
-	originalWrite := writeLayoutImage
-	defer func() {
-		fetchRemoteImage = originalFetch
-		writeLayout = originalWriteLayout
-		fromLayoutPath = originalFromLayout
-		appendLayoutImage = originalAppend
-		writeLayoutImage = originalWrite
-	}()
-
-	fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
+	engine := NewEngine()
+	engine.fetchRemoteImage = func(ref name.Reference, _ ...remote.Option) (v1.Image, error) {
 		return fakeImageWithDigest(t, map[string]string{
 			"quay.io/example/api:v1": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"busybox:1.36":           "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		}[ref.String()]), nil
 	}
-	writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
+	engine.writeLayout = func(path string, _ v1.ImageIndex) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	fromLayoutPath = func(path string) (layout.Path, error) {
+	engine.fromLayoutPath = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
 	}
-	writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
-	appendLayoutImage = func(_ layout.Path, _ v1.Image) error {
+	engine.writeLayoutImage = func(_ layout.Path, _ v1.Image) error { return nil }
+	engine.appendLayoutImage = func(_ layout.Path, _ v1.Image) error {
 		return nil
 	}
 
 	status := new(bytes.Buffer)
-	if _, err := ArchiveImages(context.Background(), []string{"quay.io/example/api:v1", "busybox:1.36"}, t.TempDir(), 1, status); err != nil {
+	if _, err := engine.ArchiveImages(context.Background(), []string{"quay.io/example/api:v1", "busybox:1.36"}, t.TempDir(), 1, status); err != nil {
 		t.Fatalf("ArchiveImages() error = %v", err)
 	}
 

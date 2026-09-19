@@ -14,15 +14,14 @@ import (
 // errRegistryRequired indicates no usable registry was provided.
 var errRegistryRequired = errors.New("registry argument is required")
 
-// isInteractive reports whether prompting is safe on both streams.
-// Kept as a var so tests can override terminal detection.
-var isInteractive = func(in io.Reader, out io.Writer) bool {
+// defaultIsInteractive reports whether prompting is safe on both streams.
+func defaultIsInteractive(in io.Reader, out io.Writer) bool {
 	return in != nil && terminal.IsReader(in) && out != nil && terminal.IsWriter(out)
 }
 
 // promptForRegistry prompts for a registry only in interactive mode.
 func promptForRegistry(in io.Reader, out io.Writer) (string, error) {
-	if !isInteractive(in, out) {
+	if !defaultIsInteractive(in, out) {
 		return "", errRegistryRequired
 	}
 	return readRegistryLoop(in, out)
