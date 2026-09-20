@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"helm-deep-pack/internal/pushspec"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 )
 
@@ -303,8 +305,8 @@ func TestAttributeOptionalImagesUsesPartialProbeManifest(t *testing.T) {
 	}
 }
 
-func TestMergeImageInventoryRequiredStatusWins(t *testing.T) {
-	got := mergeImageInventory(
+func TestImageInventoryPreservesOrderAndRequiredStatus(t *testing.T) {
+	got := newImageInventory(
 		[]string{"quay.io/example/annotation:v1", "quay.io/example/shared:v1"},
 		[]string{"quay.io/example/shared:v1"},
 		optionalImageDiscovery{
@@ -316,13 +318,60 @@ func TestMergeImageInventoryRequiredStatusWins(t *testing.T) {
 		},
 	)
 
-	want := []imageInventoryEntry{
+	if got, want := got.requiredImages, []string{"quay.io/example/shared:v1"}; !equalStrings(got, want) {
+		t.Fatalf("requiredImages = %v, want %v", got, want)
+	}
+	if got, want := got.optionalImages, []string{"quay.io/example/annotation:v1", "quay.io/example/optional:v1"}; !equalStrings(got, want) {
+		t.Fatalf("optionalImages = %v, want %v", got, want)
+	}
+
+	specs := []pushspec.ArchiveSpec{
+		{Image: "quay.io/example/annotation:v1"},
+		{Image: "quay.io/example/shared:v1"},
+		{Image: "quay.io/example/optional:v1"},
+	}
+	got.applyMetadata(specs)
+	want := []pushspec.ArchiveSpec{
 		{Image: "quay.io/example/annotation:v1", Optional: true},
 		{Image: "quay.io/example/shared:v1"},
 		{Image: "quay.io/example/optional:v1", Optional: true, OptionalFlags: []string{".Values.optional.enabled"}},
 	}
-	if !equalImageInventory(got, want) {
-		t.Fatalf("mergeImageInventory() = %#v, want %#v", got, want)
+	if !reflect.DeepEqual(specs, want) {
+		t.Fatalf("applyMetadata() = %#v, want %#v", specs, want)
+	}
+}
+
+func TestImageInventoryMergesOptionalFlags(t *testing.T) {
+	got := newImageInventory(
+		[]string{"quay.io/example/chart-only:v1"},
+		[]string{"quay.io/example/required:v1"},
+		optionalImageDiscovery{
+			Images: []string{
+				"quay.io/example/chart-only:v1",
+				"quay.io/example/optional:v1",
+				"quay.io/example/required:v1",
+			},
+			OptionalFlags: map[string][]string{
+				"quay.io/example/chart-only:v1": {".Values.first", ".Values.first", ".Values.second"},
+				"quay.io/example/optional:v1":   {".Values.optional"},
+				"quay.io/example/required:v1":   {".Values.ignored"},
+			},
+		},
+	)
+
+	specs := []pushspec.ArchiveSpec{
+		{Image: "quay.io/example/chart-only:v1"},
+		{Image: "quay.io/example/required:v1"},
+		{Image: "quay.io/example/optional:v1"},
+	}
+	got.applyMetadata(specs)
+	want := []pushspec.ArchiveSpec{
+		{Image: "quay.io/example/chart-only:v1", Optional: true, OptionalFlags: []string{".Values.first", ".Values.second"}},
+		{Image: "quay.io/example/required:v1"},
+		{Image: "quay.io/example/optional:v1", Optional: true, OptionalFlags: []string{".Values.optional"}},
+	}
+	if !reflect.DeepEqual(specs, want) {
+		t.Fatalf("applyMetadata() = %#v, want %#v", specs, want)
 	}
 }
 
@@ -387,18 +436,6 @@ func equalStrings(got, want []string) bool {
 	}
 	for index := range want {
 		if got[index] != want[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func equalImageInventory(got, want []imageInventoryEntry) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for index := range want {
-		if got[index].Image != want[index].Image || got[index].Optional != want[index].Optional || !equalStrings(got[index].OptionalFlags, want[index].OptionalFlags) {
 			return false
 		}
 	}

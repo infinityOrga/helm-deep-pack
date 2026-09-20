@@ -9,8 +9,84 @@ import (
 	"time"
 
 	"github.com/mitchellh/copystructure"
+	"helm-deep-pack/internal/pushspec"
 	"helm.sh/helm/v3/pkg/chartutil"
 )
+
+type imageInventoryEntry struct {
+	Image         string
+	Optional      bool
+	OptionalFlags []string
+}
+
+type imageInventory struct {
+	requiredImages []string
+	optionalImages []string
+	metadata       map[string]imageInventoryEntry
+}
+
+func newImageInventory(chartImages, renderedImages []string, optional optionalImageDiscovery) imageInventory {
+	entries := make([]imageInventoryEntry, 0, len(chartImages)+len(renderedImages)+len(optional.Images))
+	byImage := make(map[string]int, cap(entries))
+	addImage := func(image string, isOptional bool, flags []string) {
+		if index, ok := byImage[image]; ok {
+			entry := &entries[index]
+			if !isOptional {
+				entry.Optional = false
+				entry.OptionalFlags = nil
+				return
+			}
+			if entry.Optional {
+				entry.OptionalFlags = appendUnique(entry.OptionalFlags, flags...)
+			}
+			return
+		}
+		byImage[image] = len(entries)
+		entries = append(entries, imageInventoryEntry{
+			Image:         image,
+			Optional:      isOptional,
+			OptionalFlags: append([]string(nil), flags...),
+		})
+	}
+
+	for _, image := range chartImages {
+		addImage(image, true, nil)
+	}
+	for _, image := range renderedImages {
+		addImage(image, false, nil)
+	}
+	for _, image := range optional.Images {
+		addImage(image, true, optional.OptionalFlags[image])
+	}
+
+	inventory := imageInventory{
+		metadata: make(map[string]imageInventoryEntry, len(entries)),
+	}
+	for _, entry := range entries {
+		inventory.metadata[entry.Image] = entry
+		if entry.Optional {
+			inventory.optionalImages = append(inventory.optionalImages, entry.Image)
+			continue
+		}
+		inventory.requiredImages = append(inventory.requiredImages, entry.Image)
+	}
+	return inventory
+}
+
+func (inventory imageInventory) applyMetadata(specs []pushspec.ArchiveSpec) {
+	for index := range specs {
+		entry, ok := inventory.metadata[specs[index].Image]
+		if !ok {
+			continue
+		}
+		specs[index].Optional = entry.Optional
+		if entry.Optional {
+			specs[index].OptionalFlags = append([]string(nil), entry.OptionalFlags...)
+		} else {
+			specs[index].OptionalFlags = nil
+		}
+	}
+}
 
 type optionalImageDiscovery struct {
 	Images        []string

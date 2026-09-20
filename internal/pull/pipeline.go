@@ -10,12 +10,6 @@ import (
 	"path/filepath"
 )
 
-type imageInventoryEntry struct {
-	Image         string
-	Optional      bool
-	OptionalFlags []string
-}
-
 func (r Runner) Run(ctx context.Context, opts Options, status ...io.Writer) error {
 	_, err := r.Execute(ctx, opts, status...)
 	if err != nil {
@@ -86,21 +80,22 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 		}
 	}
 
-	inventory := mergeImageInventory(chartImages, images, optionalDiscovery)
-	requiredImages, optionalImages := splitImageInventory(inventory)
-
-	specs := make([]pushspec.ArchiveSpec, 0, len(inventory))
-	if len(requiredImages) > 0 {
-		archived, archiveErr := r.archiveImages(runCtx, requiredImages, outputDir, opts.Concurrency, statusOut)
+	inventory := newImageInventory(chartImages, images, optionalDiscovery)
+	specs := make([]pushspec.ArchiveSpec, 0, len(inventory.requiredImages)+len(inventory.optionalImages))
+	appendArchivedSpecs := func(archived []pushspec.ArchiveSpec) {
+		inventory.applyMetadata(archived)
+		specs = append(specs, archived...)
+	}
+	if len(inventory.requiredImages) > 0 {
+		archived, archiveErr := r.archiveImages(runCtx, inventory.requiredImages, outputDir, opts.Concurrency, statusOut)
 		if archiveErr != nil {
 			cancel()
 			return PullResult{}, archiveErr
 		}
-		applyImageMetadata(archived, inventory)
-		specs = append(specs, archived...)
+		appendArchivedSpecs(archived)
 	}
-	if len(optionalImages) > 0 {
-		archived, failures, archiveErr := r.archiveOptionalImages(runCtx, optionalImages, outputDir, opts.Concurrency, statusOut)
+	if len(inventory.optionalImages) > 0 {
+		archived, failures, archiveErr := r.archiveOptionalImages(runCtx, inventory.optionalImages, outputDir, opts.Concurrency, statusOut)
 		if archiveErr != nil {
 			if err := writeStatus(statusOut, "warning: optional image archiving failed; optional images may be missing: %v\n", archiveErr); err != nil {
 				return PullResult{}, err
@@ -111,8 +106,7 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 				return PullResult{}, err
 			}
 		}
-		applyImageMetadata(archived, inventory)
-		specs = append(specs, archived...)
+		appendArchivedSpecs(archived)
 	}
 
 	requiredCount, optionalCount := countImageCategories(specs)
@@ -147,72 +141,6 @@ func writeStatus(w io.Writer, format string, args ...interface{}) error {
 		return fmt.Errorf("write status: %w", err)
 	}
 	return nil
-}
-
-func mergeImageInventory(chartImages, renderedImages []string, optional optionalImageDiscovery) []imageInventoryEntry {
-	entries := make([]imageInventoryEntry, 0, len(chartImages)+len(renderedImages)+len(optional.Images))
-	byImage := make(map[string]int, cap(entries))
-	add := func(image string, isOptional bool, flags []string) {
-		if index, ok := byImage[image]; ok {
-			entry := &entries[index]
-			if !isOptional {
-				entry.Optional = false
-				entry.OptionalFlags = nil
-				return
-			}
-			if entry.Optional {
-				entry.OptionalFlags = appendUnique(entry.OptionalFlags, flags...)
-			}
-			return
-		}
-		byImage[image] = len(entries)
-		entries = append(entries, imageInventoryEntry{
-			Image:         image,
-			Optional:      isOptional,
-			OptionalFlags: append([]string(nil), flags...),
-		})
-	}
-
-	for _, image := range chartImages {
-		add(image, true, nil)
-	}
-	for _, image := range renderedImages {
-		add(image, false, nil)
-	}
-	for _, image := range optional.Images {
-		add(image, true, optional.OptionalFlags[image])
-	}
-	return entries
-}
-
-func splitImageInventory(entries []imageInventoryEntry) (required, optional []string) {
-	for _, entry := range entries {
-		if entry.Optional {
-			optional = append(optional, entry.Image)
-			continue
-		}
-		required = append(required, entry.Image)
-	}
-	return required, optional
-}
-
-func applyImageMetadata(specs []pushspec.ArchiveSpec, entries []imageInventoryEntry) {
-	metadata := make(map[string]imageInventoryEntry, len(entries))
-	for _, entry := range entries {
-		metadata[entry.Image] = entry
-	}
-	for index := range specs {
-		entry, ok := metadata[specs[index].Image]
-		if !ok {
-			continue
-		}
-		specs[index].Optional = entry.Optional
-		if entry.Optional {
-			specs[index].OptionalFlags = append([]string(nil), entry.OptionalFlags...)
-		} else {
-			specs[index].OptionalFlags = nil
-		}
-	}
 }
 
 func countImageCategories(specs []pushspec.ArchiveSpec) (required, optional int) {
