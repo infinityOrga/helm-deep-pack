@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -139,6 +140,19 @@ func TestExtractFromTarGz(t *testing.T) {
 	}
 }
 
+func TestExtractFromTarGzRejectsOversizedBinary(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "test.tar.gz")
+	if err := os.WriteFile(archive, buildOversizedTarGz(t, "bin/helm-deep-pack"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	err := extractBinary(archive, "linux", &out)
+	if err == nil || !strings.Contains(err.Error(), "archive entry is too large") {
+		t.Fatalf("extractBinary() error = %v, want oversized-entry error", err)
+	}
+}
+
 func TestExtractFromZip(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "test.zip")
 	if err := os.WriteFile(archive, buildZip(t, "bin/helm-deep-pack.exe", []byte("new-binary")), 0o644); err != nil {
@@ -150,6 +164,29 @@ func TestExtractFromZip(t *testing.T) {
 	}
 	if out.String() != "new-binary" {
 		t.Fatalf("extractBinary() output = %q", out.String())
+	}
+}
+
+func TestExtractFromZipRejectsOversizedBinary(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "test.zip")
+	if err := os.WriteFile(archive, buildOversizedZip("bin/helm-deep-pack.exe"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	err := extractBinary(archive, "windows", &out)
+	if err == nil || !strings.Contains(err.Error(), "archive entry is too large") {
+		t.Fatalf("extractBinary() error = %v, want oversized-entry error", err)
+	}
+}
+
+func TestCopyArchiveEntryRejectsOversizedEntry(t *testing.T) {
+	var out bytes.Buffer
+	if err := copyArchiveEntry(&out, strings.NewReader("not copied"), maxExtractedBinarySize+1); err == nil {
+		t.Fatal("copyArchiveEntry() accepted an oversized entry")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("copyArchiveEntry() wrote %d bytes for an oversized entry", out.Len())
 	}
 }
 
@@ -353,6 +390,21 @@ func buildTarGz(t *testing.T, name string, payload []byte) []byte {
 	return out.Bytes()
 }
 
+func buildOversizedTarGz(t *testing.T, name string) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	gz := gzip.NewWriter(&out)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: maxExtractedBinarySize + 1, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatalf("WriteHeader error = %v", err)
+	}
+	// The extractor rejects the declared size before consuming the payload.
+	if err := gz.Close(); err != nil {
+		t.Fatalf("Close gzip writer error = %v", err)
+	}
+	return out.Bytes()
+}
+
 func buildZip(t *testing.T, name string, payload []byte) []byte {
 	t.Helper()
 	var out bytes.Buffer
@@ -368,6 +420,42 @@ func buildZip(t *testing.T, name string, payload []byte) []byte {
 		t.Fatalf("Close zip writer error = %v", err)
 	}
 	return out.Bytes()
+}
+
+func buildOversizedZip(name string) []byte {
+	const (
+		localHeaderSize   = 30
+		centralHeaderSize = 46
+		endHeaderSize     = 22
+	)
+
+	entrySize := uint32(maxExtractedBinarySize + 1)
+	nameBytes := []byte(name)
+	local := make([]byte, localHeaderSize+len(nameBytes))
+	binary.LittleEndian.PutUint32(local[0:], 0x04034b50)
+	binary.LittleEndian.PutUint16(local[4:], 20)
+	binary.LittleEndian.PutUint16(local[8:], zip.Store)
+	binary.LittleEndian.PutUint32(local[22:], entrySize)
+	binary.LittleEndian.PutUint16(local[26:], uint16(len(nameBytes)))
+	copy(local[localHeaderSize:], nameBytes)
+
+	central := make([]byte, centralHeaderSize+len(nameBytes))
+	binary.LittleEndian.PutUint32(central[0:], 0x02014b50)
+	binary.LittleEndian.PutUint16(central[4:], 20)
+	binary.LittleEndian.PutUint16(central[6:], 20)
+	binary.LittleEndian.PutUint16(central[10:], zip.Store)
+	binary.LittleEndian.PutUint32(central[24:], entrySize)
+	binary.LittleEndian.PutUint16(central[28:], uint16(len(nameBytes)))
+	copy(central[centralHeaderSize:], nameBytes)
+
+	end := make([]byte, endHeaderSize)
+	binary.LittleEndian.PutUint32(end[0:], 0x06054b50)
+	binary.LittleEndian.PutUint16(end[8:], 1)
+	binary.LittleEndian.PutUint16(end[10:], 1)
+	binary.LittleEndian.PutUint32(end[12:], uint32(len(central)))
+	binary.LittleEndian.PutUint32(end[16:], uint32(len(local)))
+
+	return append(append(local, central...), end...)
 }
 
 func serverURL(r *http.Request) string {

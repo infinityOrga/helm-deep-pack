@@ -26,7 +26,8 @@ import (
 )
 
 const (
-	defaultReleaseBaseURL = "https://api.github.com"
+	defaultReleaseBaseURL  = "https://api.github.com"
+	maxExtractedBinarySize = 128 << 20
 )
 
 var (
@@ -577,7 +578,7 @@ func extractFromTarGz(archivePath, goos string, dst io.Writer) error {
 		if filepath.Base(header.Name) != expected {
 			continue
 		}
-		if _, err := io.Copy(dst, tr); err != nil {
+		if err := copyArchiveEntry(dst, tr, header.Size); err != nil {
 			return fmt.Errorf("extract binary from tar archive: %w", err)
 		}
 		return nil
@@ -602,7 +603,7 @@ func extractFromZip(archivePath, goos string, dst io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("open zip entry %q: %w", file.Name, err)
 		}
-		_, copyErr := io.Copy(dst, rc)
+		copyErr := copyArchiveEntry(dst, rc, int64(file.UncompressedSize64))
 		closeErr := rc.Close()
 		if copyErr != nil {
 			return fmt.Errorf("extract binary from zip archive: %w", copyErr)
@@ -613,6 +614,14 @@ func extractFromZip(archivePath, goos string, dst io.Writer) error {
 		return nil
 	}
 	return fmt.Errorf("binary %q not found in archive", expected)
+}
+
+func copyArchiveEntry(dst io.Writer, src io.Reader, size int64) error {
+	if size < 0 || size > maxExtractedBinarySize {
+		return fmt.Errorf("archive entry is too large: %d bytes (maximum %d)", size, maxExtractedBinarySize)
+	}
+	_, err := io.CopyN(dst, src, size)
+	return err
 }
 
 func replaceExecutable(realPath, newPath string) (bool, error) {
@@ -633,16 +642,25 @@ func launchWindowsHelper(realPath, newPath string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(helperPath, "upgrade-helper", "--target-exe", realPath, "--incoming-exe", newPath)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
+	// createWindowsHelperCopy creates helperPath from this executable in a new
+	// temporary file; it is not derived from user input. StartProcess passes
+	// the helper arguments directly without shell interpretation.
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		_ = os.Remove(helperPath)
+		return fmt.Errorf("open helper output: %w", err)
+	}
+	defer func() { _ = devNull.Close() }()
+
+	proc, err := os.StartProcess(helperPath,
+		[]string{helperPath, "upgrade-helper", "--target-exe", realPath, "--incoming-exe", newPath},
+		&os.ProcAttr{Files: []*os.File{devNull, devNull, devNull}},
+	)
+	if err != nil {
 		_ = os.Remove(helperPath)
 		return fmt.Errorf("start windows helper: %w", err)
 	}
-	if cmd.Process != nil {
-		_ = cmd.Process.Release()
-	}
+	_ = proc.Release()
 	return nil
 }
 
