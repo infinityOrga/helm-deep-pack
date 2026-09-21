@@ -120,6 +120,35 @@ func TestValidateChartName(t *testing.T) {
 	}
 }
 
+func TestIsLocalChartPath(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"relative directory", "./charts/my-chart", true},
+		{"parent directory", "../charts/my-chart", true},
+		{"nested relative path", "charts/my-chart", true},
+		{"absolute path", "/tmp/charts/my-chart", true},
+		{"windows path", `C:\charts\my-chart`, true},
+		{"current directory", ".", true},
+		{"parent directory shorthand", "..", true},
+		{"absolute path with scheme-like filename", "/tmp/chart://variant", true},
+		{"relative path with scheme-like filename", "./charts/chart://variant", true},
+		{"chart name", "my-chart", false},
+		{"OCI reference", "oci://registry.example.com/charts/my-chart", false},
+		{"HTTP URL", "https://charts.example.com/my-chart", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsLocalChartPath(tt.value); got != tt.want {
+				t.Fatalf("IsLocalChartPath(%q) = %v, want %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateConcurrency(t *testing.T) {
 	tests := []struct {
 		name            string

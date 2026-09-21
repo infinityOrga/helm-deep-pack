@@ -121,21 +121,46 @@ func TestPullCmd_ValidateChartNameInvalidLeadingHyphenWithArgSeparator(t *testin
 	}
 }
 
-func TestPullCmd_ValidateChartNameValid(t *testing.T) {
-	validNames := []string{"nginx", "nginx-ingress", "prometheus-operator", "my-chart"}
-	for _, name := range validNames {
-		t.Run(name, func(t *testing.T) {
+func TestPullCmd_ValidChartSourcePassesValidation(t *testing.T) {
+	validSources := []string{
+		"nginx",
+		"nginx-ingress",
+		"prometheus-operator",
+		"my-chart",
+		"./charts/my-local-chart",
+		"../charts/my-local-chart",
+		"/tmp/charts/my-local-chart",
+		`C:\charts\my-local-chart`,
+	}
+	for _, chart := range validSources {
+		t.Run(chart, func(t *testing.T) {
 			capture, restore := spyPullRun(nil)
 			defer restore()
 
-			output := ExecuteCommand(pullCmd, []string{name})
+			output := ExecuteCommand(pullCmd, []string{chart})
 			if output.Err != nil {
-				t.Fatalf("expected valid chart name %q to pass validation, got: %v", name, output.Err)
+				t.Fatalf("expected valid chart source %q to pass validation, got: %v", chart, output.Err)
 			}
 			if !capture.called {
-				t.Fatalf("expected workflow to be called for chart %q", name)
+				t.Fatalf("expected workflow to be called for chart source %q", chart)
+			}
+			if capture.opts.Chart != chart {
+				t.Fatalf("expected chart source %q to pass through unchanged, got %q", chart, capture.opts.Chart)
 			}
 		})
+	}
+}
+
+func TestPullCmd_LocalChartPathWithRepoRejected(t *testing.T) {
+	output := ExecuteCommand(pullCmd, []string{
+		"./charts/my-local-chart",
+		"--repo", "https://charts.example.com",
+	})
+	if output.Err == nil {
+		t.Fatal("expected --repo with a local chart path to be rejected")
+	}
+	if !strings.Contains(combinedErrorText(output), "--repo cannot be combined with a local chart path") {
+		t.Fatalf("expected local path/repo error, got: %s", combinedErrorText(output))
 	}
 }
 

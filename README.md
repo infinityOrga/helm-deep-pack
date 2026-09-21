@@ -65,7 +65,8 @@ helm-deep-pack upgrade --version 1.2.3 --yes
 helm-deep-pack pull CHART [--repo REPO] [--version VERSION] [--output-dir DIR] [--concurrency N] [--values FILE]... [--set KEY=VALUE]... [--destination-platform OS/ARCH] [--rendered-only] [--optional-image-timeout DURATION] [--allow-insecure-http]
 ```
 
-- `CHART` can be a chart name, local chart path, or `oci://...` reference.
+- `CHART` can be a chart name, a relative or absolute local chart path, or an `oci://...` reference. Relative paths are resolved from the current working directory; use forms such as `./charts/my-local-chart`, `../charts/my-local-chart`, or `charts/my-local-chart`.
+- Omit `--repo` when using a local chart path; `--repo` is for remote chart repositories.
 - `--repo` is HTTPS by default; use `--allow-insecure-http` only for intentionally plain-HTTP chart repositories.
 - Use `--values`/`-f` and `--set` to render deployment-specific variants that expose optional image references.
 - By default, `pull` renders the requested values and then performs a best-effort inventory render with every effective boolean value enabled. The bundle contains the union of those renders; this is a discoverable union, not an exhaustive enumeration of arbitrary Helm value permutations.

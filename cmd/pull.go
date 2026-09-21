@@ -42,20 +42,26 @@ var pullCmd = &cobra.Command{
 		pullChart = args[0]
 
 		chartIsOCI := validation.IsOCIReference(pullChart)
+		chartIsLocal := validation.IsLocalChartPath(pullChart)
 		repoIsOCI := validation.IsOCIReference(pullRepo)
 
 		if chartIsOCI {
 			if err := validation.ValidateOCIRef("chart argument", pullChart); err != nil {
 				return err
 			}
-			if pullRepo != "" {
-				return fmt.Errorf("--repo cannot be combined with an oci:// chart reference")
+		} else if !chartIsLocal {
+			if err := validation.ValidateChartName("chart argument", pullChart); err != nil {
+				return err
 			}
-		} else if err := validation.ValidateChartName("chart argument", pullChart); err != nil {
-			return err
 		}
 
 		if pullRepo != "" {
+			switch {
+			case chartIsOCI:
+				return fmt.Errorf("--repo cannot be combined with an oci:// chart reference")
+			case chartIsLocal:
+				return fmt.Errorf("--repo cannot be combined with a local chart path")
+			}
 			if repoIsOCI {
 				if err := validation.ValidateOCIRef("--repo", pullRepo); err != nil {
 					return err

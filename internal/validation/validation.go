@@ -19,6 +19,7 @@ package validation
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -76,6 +77,24 @@ func ValidateChartName(name, value string) error {
 		return fmt.Errorf("%s %w", name, err)
 	}
 	return nil
+}
+
+// IsLocalChartPath reports whether value looks like a filesystem path rather
+// than a chart name or remote reference. Existence is checked by Helm's chart
+// loader; this only keeps path arguments out of chart-name validation.
+func IsLocalChartPath(value string) bool {
+	if value == "." || value == ".." {
+		return true
+	}
+	if filepath.IsAbs(value) {
+		return true
+	}
+	if schemeIndex := strings.Index(value, "://"); schemeIndex >= 0 {
+		if firstSeparator := strings.IndexAny(value, `/\`); firstSeparator == schemeIndex+1 {
+			return false
+		}
+	}
+	return strings.ContainsAny(value, `/\`)
 }
 
 // IsOCIReference reports whether value uses the oci:// scheme.
