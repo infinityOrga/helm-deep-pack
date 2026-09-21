@@ -132,16 +132,9 @@ func TestRootCmd_VersionFlag(t *testing.T) {
 }
 
 func TestRootCmd_WarnsWhenUpdateIsAvailable(t *testing.T) {
-	originalVersion := version
-	originalCheck := checkForUpdate
-	defer func() {
-		version = originalVersion
-		checkForUpdate = originalCheck
-	}()
-	version = "1.2.0"
-	checkForUpdate = func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
+	stubUpdateCheck(t, "1.2.0", func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
 		return upgrade.UpdateNotice{CurrentVersion: "1.2.0", LatestVersion: "1.3.0"}, nil
-	}
+	})
 
 	tempCmd := &cobra.Command{
 		Use: "update-test",
@@ -163,16 +156,9 @@ func TestRootCmd_WarnsWhenUpdateIsAvailable(t *testing.T) {
 }
 
 func TestRootCmd_UpdateCheckFailureDoesNotBlockCommand(t *testing.T) {
-	originalVersion := version
-	originalCheck := checkForUpdate
-	defer func() {
-		version = originalVersion
-		checkForUpdate = originalCheck
-	}()
-	version = "1.2.0"
-	checkForUpdate = func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
+	stubUpdateCheck(t, "1.2.0", func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
 		return upgrade.UpdateNotice{}, errors.New("network unavailable")
-	}
+	})
 
 	ran := false
 	tempCmd := &cobra.Command{
@@ -195,20 +181,13 @@ func TestRootCmd_UpdateCheckFailureDoesNotBlockCommand(t *testing.T) {
 }
 
 func TestRootCmd_SkipsUpdateCheckForUpgrade(t *testing.T) {
-	originalVersion := version
-	originalCheck := checkForUpdate
 	originalUpgradeRun := upgradeRun
-	defer func() {
-		version = originalVersion
-		checkForUpdate = originalCheck
-		upgradeRun = originalUpgradeRun
-	}()
-	version = "1.2.0"
+	t.Cleanup(func() { upgradeRun = originalUpgradeRun })
 	called := false
-	checkForUpdate = func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
+	stubUpdateCheck(t, "1.2.0", func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
 		called = true
 		return upgrade.UpdateNotice{CurrentVersion: "1.2.0", LatestVersion: "1.3.0"}, nil
-	}
+	})
 	upgradeRun = func(context.Context, upgrade.Options, ...io.Writer) error { return nil }
 
 	output := ExecuteCommand(upgradeCmd, nil)
@@ -218,6 +197,39 @@ func TestRootCmd_SkipsUpdateCheckForUpgrade(t *testing.T) {
 	if called {
 		t.Fatal("upgrade command performed the update check")
 	}
+}
+
+func TestRootCmd_WarnsWhenCacheWriteFails(t *testing.T) {
+	stubUpdateCheck(t, "1.2.0", func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
+		return upgrade.UpdateNotice{CurrentVersion: "1.2.0", LatestVersion: "1.3.0"}, errors.New("cache unavailable")
+	})
+
+	tempCmd := &cobra.Command{
+		Use: "cache-error-update-test",
+		Run: func(*cobra.Command, []string) {},
+	}
+	rootCmd.AddCommand(tempCmd)
+	defer rootCmd.RemoveCommand(tempCmd)
+
+	output := ExecuteCommand(tempCmd, nil)
+	if output.Err != nil {
+		t.Fatalf("cache-error-update-test failed: %v", output.Err)
+	}
+	if !strings.Contains(output.Stderr, "warning: helm-deep-pack 1.3.0 is available") {
+		t.Fatalf("expected update warning, got: %q", output.Stderr)
+	}
+}
+
+func stubUpdateCheck(t *testing.T, currentVersion string, check func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error)) {
+	t.Helper()
+	originalVersion := version
+	originalCheck := checkForUpdate
+	version = currentVersion
+	checkForUpdate = check
+	t.Cleanup(func() {
+		version = originalVersion
+		checkForUpdate = originalCheck
+	})
 }
 
 func TestRunPushHelperIfNeeded_AllowsZeroArgsAndReachesWorkflow(t *testing.T) {

@@ -33,6 +33,7 @@ type updateCheckCache struct {
 	CheckedAt     time.Time `json:"checked_at"`
 	LatestVersion string    `json:"latest_version,omitempty"`
 	NotifiedAt    time.Time `json:"notified_at"`
+	CheckComplete bool      `json:"check_complete"`
 }
 
 func CheckForUpdate(ctx context.Context, opts UpdateCheckOptions) (UpdateNotice, error) {
@@ -73,6 +74,7 @@ func CheckForUpdate(ctx context.Context, opts UpdateCheckOptions) (UpdateNotice,
 	release, err := LookupRelease(checkCtx, lookup, "")
 	if err != nil {
 		cache.CheckedAt = now
+		cache.CheckComplete = true
 		_ = writeUpdateCheckCache(cachePath, cache)
 		return UpdateNotice{}, err
 	}
@@ -80,19 +82,15 @@ func CheckForUpdate(ctx context.Context, opts UpdateCheckOptions) (UpdateNotice,
 	previousLatest := cache.LatestVersion
 	cache.CheckedAt = now
 	cache.LatestVersion = release.BareVersion
-	notice := UpdateNotice{}
+	cache.CheckComplete = true
 	if isNewerVersion(currentVersion, cache.LatestVersion) &&
 		(previousLatest != cache.LatestVersion || notificationDue(cache.NotifiedAt, now)) {
-		notice = UpdateNotice{
-			CurrentVersion: currentVersion,
-			LatestVersion:  cache.LatestVersion,
-		}
-		cache.NotifiedAt = now
+		return persistUpdateNotice(cache, currentVersion, now, cachePath)
 	}
 	if err := writeUpdateCheckCache(cachePath, cache); err != nil {
 		return UpdateNotice{}, err
 	}
-	return notice, nil
+	return UpdateNotice{}, nil
 }
 
 func defaultUpdateCheckCachePath() (string, error) {
@@ -114,6 +112,12 @@ func readUpdateCheckCache(path string) (updateCheckCache, error) {
 
 	var cache updateCheckCache
 	if err := json.Unmarshal(data, &cache); err != nil {
+		return updateCheckCache{}, nil
+	}
+	if cache.CheckedAt.IsZero() || !cache.CheckComplete {
+		return updateCheckCache{}, nil
+	}
+	if cache.LatestVersion != "" && !isSemver(cache.LatestVersion) {
 		return updateCheckCache{}, nil
 	}
 	return cache, nil
@@ -138,14 +142,19 @@ func noticeFromCache(cache updateCheckCache, currentVersion string, now time.Tim
 		return UpdateNotice{}, nil
 	}
 
+	return persistUpdateNotice(cache, currentVersion, now, cachePath)
+}
+
+func persistUpdateNotice(cache updateCheckCache, currentVersion string, now time.Time, cachePath string) (UpdateNotice, error) {
 	cache.NotifiedAt = now
-	if err := writeUpdateCheckCache(cachePath, cache); err != nil {
-		return UpdateNotice{}, err
-	}
-	return UpdateNotice{
+	notice := UpdateNotice{
 		CurrentVersion: currentVersion,
 		LatestVersion:  cache.LatestVersion,
-	}, nil
+	}
+	if err := writeUpdateCheckCache(cachePath, cache); err != nil {
+		return notice, err
+	}
+	return notice, nil
 }
 
 func notificationDue(last time.Time, now time.Time) bool {
@@ -162,4 +171,9 @@ func isNewerVersion(current, latest string) bool {
 		return false
 	}
 	return latestVersion.GreaterThan(currentVersion)
+}
+
+func isSemver(version string) bool {
+	_, err := semver.NewVersion(version)
+	return err == nil
 }

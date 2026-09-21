@@ -48,12 +48,6 @@ func Size(w io.Writer) (int, int) {
 	return width, height
 }
 
-// Width returns terminal width for w, or 0 when unavailable.
-func Width(w io.Writer) int {
-	width, _ := Size(w)
-	return width
-}
-
 // Truncate shortens line to width bytes when width is positive.
 func Truncate(line string, width int) string {
 	if width <= 0 {
@@ -65,22 +59,16 @@ func Truncate(line string, width int) string {
 	return line[:width]
 }
 
-// WriteString writes a string to w.
-func WriteString(w io.Writer, value string) error {
-	_, err := io.WriteString(w, value)
-	return err
-}
-
 // ClearBlock clears an N-line terminal block in-place.
 func ClearBlock(w io.Writer, lines int) error {
 	if lines <= 0 {
 		return nil
 	}
-	if err := WriteString(w, "\r\x1b[2K"); err != nil {
+	if _, err := io.WriteString(w, "\r\x1b[2K"); err != nil {
 		return err
 	}
 	for i := 1; i < lines; i++ {
-		if err := WriteString(w, "\x1b[1A\r\x1b[2K"); err != nil {
+		if _, err := io.WriteString(w, "\x1b[1A\r\x1b[2K"); err != nil {
 			return err
 		}
 	}

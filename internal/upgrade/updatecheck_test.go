@@ -67,6 +67,30 @@ func TestCheckForUpdateDoesNotReportCurrentRelease(t *testing.T) {
 	}
 }
 
+func TestCheckForUpdateDoesNotReportOlderRelease(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"tag_name":"v1.1.0"}`)
+	}))
+	defer server.Close()
+
+	notice, err := CheckForUpdate(context.Background(), UpdateCheckOptions{
+		ReleaseLookupOptions: ReleaseLookupOptions{
+			Owner:          "acme",
+			Repo:           "helm-deep-pack",
+			BaseURL:        server.URL,
+			CurrentVersion: "1.2.0",
+			HTTPClient:     server.Client(),
+		},
+		CachePath: filepath.Join(t.TempDir(), "update-check.json"),
+	})
+	if err != nil {
+		t.Fatalf("CheckForUpdate() error = %v", err)
+	}
+	if notice != (UpdateNotice{}) {
+		t.Fatalf("notice = %#v, want empty", notice)
+	}
+}
+
 func TestCheckForUpdateChecksAndRemindsWeekly(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +185,38 @@ func TestCheckForUpdateRecoversFromCorruptCache(t *testing.T) {
 			HTTPClient:     server.Client(),
 		},
 		CachePath: cachePath,
+	})
+	if err != nil {
+		t.Fatalf("CheckForUpdate() error = %v", err)
+	}
+	if notice.LatestVersion != "1.3.0" {
+		t.Fatalf("notice latest version = %q, want %q", notice.LatestVersion, "1.3.0")
+	}
+}
+
+func TestCheckForUpdateRecoversFromInvalidCacheVersion(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "update-check.json")
+	if err := os.WriteFile(cachePath, []byte(`{"checked_at":"2026-09-21T12:00:00Z","latest_version":"not-semver","check_complete":true}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"tag_name":"v1.3.0"}`)
+	}))
+	defer server.Close()
+
+	notice, err := CheckForUpdate(context.Background(), UpdateCheckOptions{
+		ReleaseLookupOptions: ReleaseLookupOptions{
+			Owner:          "acme",
+			Repo:           "helm-deep-pack",
+			BaseURL:        server.URL,
+			CurrentVersion: "1.2.0",
+			HTTPClient:     server.Client(),
+		},
+		CachePath: cachePath,
+		Now: func() time.Time {
+			return time.Date(2026, time.September, 21, 12, 0, 0, 0, time.UTC)
+		},
 	})
 	if err != nil {
 		t.Fatalf("CheckForUpdate() error = %v", err)

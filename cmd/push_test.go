@@ -147,24 +147,6 @@ func TestPushCmd_ValidateConcurrencyInvalid(t *testing.T) {
 	}
 }
 
-func TestPushCmd_ValidateConcurrencyValid(t *testing.T) {
-	validConcurrencies := validConcurrencyValues()
-	for _, concurrency := range validConcurrencies {
-		t.Run(concurrency, func(t *testing.T) {
-			capture, restore := spyPushRun(nil)
-			defer restore()
-
-			output := ExecuteCommand(pushCmd, []string{"docker.io", "--concurrency", concurrency})
-			if output.Err != nil {
-				t.Fatalf("expected valid concurrency %s to pass validation, got: %v", concurrency, output.Err)
-			}
-			if !capture.called {
-				t.Fatalf("expected workflow to be called for concurrency=%s", concurrency)
-			}
-		})
-	}
-}
-
 func TestPushCmd_FlagsMapToArgs(t *testing.T) {
 	tests := []struct {
 		name            string

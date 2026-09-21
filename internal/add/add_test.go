@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"helm-deep-pack/internal/pushspec"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -223,13 +224,13 @@ func TestRun(t *testing.T) {
 			}
 
 			if tt.wantArchivedImages != nil {
-				if !equalStringSlices(capturedArchivedImages, tt.wantArchivedImages) {
+				if !reflect.DeepEqual(capturedArchivedImages, tt.wantArchivedImages) {
 					t.Errorf("archived images = %v, want %v", capturedArchivedImages, tt.wantArchivedImages)
 				}
 			}
 
 			if tt.wantWrittenSpecs != nil {
-				if !equalArchiveSpecs(capturedWrittenSpecs, tt.wantWrittenSpecs) {
+				if !reflect.DeepEqual(capturedWrittenSpecs, tt.wantWrittenSpecs) {
 					t.Errorf("written specs = %v, want %v", capturedWrittenSpecs, tt.wantWrittenSpecs)
 				}
 			}
@@ -242,28 +243,4 @@ func TestRun(t *testing.T) {
 			}
 		})
 	}
-}
-
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func equalArchiveSpecs(a, b []pushspec.ArchiveSpec) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Image != b[i].Image || a[i].Target != b[i].Target || a[i].OCIDigest != b[i].OCIDigest || a[i].Optional != b[i].Optional || !equalStringSlices(a[i].OptionalFlags, b[i].OptionalFlags) {
-			return false
-		}
-	}
-	return true
 }

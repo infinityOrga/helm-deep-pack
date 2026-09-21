@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"time"
 
 	containername "github.com/google/go-containerregistry/pkg/name"
+	"helm.sh/helm/v3/pkg/chartutil"
 )
 
 var supportedDestinationPlatforms = []string{
@@ -71,9 +71,8 @@ func ValidateURL(name, value string, allowInsecureHTTP bool) error {
 }
 
 // ValidateChartName checks that a string is a valid Helm chart name.
-// Mirrors Helm's metadata-name validation without relying on the deprecated SDK helper.
 func ValidateChartName(name, value string) error {
-	if err := validateMetadataName(value); err != nil {
+	if err := chartutil.ValidateMetadataName(value); err != nil {
 		return fmt.Errorf("%s %w", name, err)
 	}
 	return nil
@@ -100,15 +99,6 @@ func IsLocalChartPath(value string) bool {
 // IsOCIReference reports whether value uses the oci:// scheme.
 func IsOCIReference(value string) bool {
 	return strings.HasPrefix(strings.ToLower(value), "oci://")
-}
-
-var metadataNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
-
-func validateMetadataName(name string) error {
-	if name == "" || len(name) > 253 || !metadataNamePattern.MatchString(name) {
-		return fmt.Errorf("invalid metadata name, must match regex %s and the length must not be longer than 253", metadataNamePattern.String())
-	}
-	return nil
 }
 
 // ValidateOCIRef checks that a string is a basic valid OCI chart reference.
@@ -143,33 +133,14 @@ func ValidateOCIRef(name, value string) error {
 // ValidateImageRegistry checks that a string is a valid image registry.
 // Basic validation: registry should be host:port or host, not a URL with scheme or path.
 func ValidateImageRegistry(name, value string) error {
-	// Check for empty
 	if value == "" {
 		return fmt.Errorf("%s must not be empty", name)
 	}
-	// Check for URL schemes like https:// (look for :// pattern)
-	if idx := -1; len(value) >= 3 {
-		for i := range value[:len(value)-2] {
-			if value[i:i+3] == "://" {
-				idx = i
-				break
-			}
-		}
-		if idx >= 0 {
-			return fmt.Errorf("%s should not include protocol scheme: %q", name, value)
-		}
+	if strings.Contains(value, "://") {
+		return fmt.Errorf("%s should not include protocol scheme: %q", name, value)
 	}
-	// Check for paths (look for / after host:port)
-	if idx := -1; len(value) > 0 {
-		for i, c := range value {
-			if c == '/' {
-				idx = i
-				break
-			}
-		}
-		if idx > 0 {
-			return fmt.Errorf("%s should not include path: %q", name, value)
-		}
+	if strings.Contains(value, "/") {
+		return fmt.Errorf("%s should not include path: %q", name, value)
 	}
 	return nil
 }
@@ -230,18 +201,6 @@ func ValidateNonNegativeDuration(name string, value time.Duration) error {
 	if value < 0 {
 		return fmt.Errorf("%s must not be negative", name)
 	}
-	return nil
-}
-
-// ValidateVersion checks that a version string is valid (basic validation).
-// Empty version is OK (uses latest). Non-empty should not start with 'v'.
-func ValidateVersion(name, value string) error {
-	if value == "" {
-		// Empty version is OK (uses latest)
-		return nil
-	}
-	// Helm expects versions without v prefix (not enforced here, just a convention)
-	// The actual version resolution happens at runtime when fetching the chart.
 	return nil
 }
 

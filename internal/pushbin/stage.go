@@ -27,10 +27,6 @@ var (
 	buildLocalHelperBinary = buildLocalHelperBinaryFromSource
 )
 
-func Stage(outputDir string) (string, error) {
-	return StageForPlatform(context.Background(), outputDir, "", "")
-}
-
 func StageForPlatform(ctx context.Context, outputDir, destinationPlatform, currentVersion string) (string, error) {
 	goos, goarch, err := resolveDestinationPlatform(destinationPlatform)
 	if err != nil {

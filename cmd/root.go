@@ -76,10 +76,10 @@ func warnAboutUpdate(cmd *cobra.Command) {
 		return
 	}
 
-	notice, err := checkForUpdate(cmd.Context(), upgrade.UpdateCheckOptions{
+	notice, _ := checkForUpdate(cmd.Context(), upgrade.UpdateCheckOptions{
 		ReleaseLookupOptions: upgrade.DefaultReleaseLookupOptions(Version()),
 	})
-	if err != nil || notice.LatestVersion == "" {
+	if notice.LatestVersion == "" {
 		return
 	}
 

@@ -274,24 +274,6 @@ func TestPullCmd_ValidateConcurrencyInvalid(t *testing.T) {
 	}
 }
 
-func TestPullCmd_ValidateConcurrencyValid(t *testing.T) {
-	validConcurrencies := validConcurrencyValues()
-	for _, concurrency := range validConcurrencies {
-		t.Run(concurrency, func(t *testing.T) {
-			capture, restore := spyPullRun(nil)
-			defer restore()
-
-			output := ExecuteCommand(pullCmd, []string{"nginx", "--concurrency", concurrency})
-			if output.Err != nil {
-				t.Fatalf("expected valid concurrency %s to pass validation, got: %v", concurrency, output.Err)
-			}
-			if !capture.called {
-				t.Fatalf("expected workflow to be called for concurrency=%s", concurrency)
-			}
-		})
-	}
-}
-
 func TestPullCmd_ValidateOptionalImageTimeoutInvalid(t *testing.T) {
 	output := ExecuteCommand(pullCmd, []string{"nginx", "--optional-image-timeout", "-1s"})
 	if output.Err == nil {

@@ -80,7 +80,7 @@ func New(w io.Writer, label string, total int) *Progress {
 	isTerminal := terminal.IsWriter(w)
 	width := 0
 	if isTerminal {
-		width = terminal.Width(w)
+		width, _ = terminal.Size(w)
 	}
 	return &Progress{
 		w:        w,

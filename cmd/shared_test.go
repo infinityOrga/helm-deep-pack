@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 	"helm-deep-pack/internal/add"
 	"helm-deep-pack/internal/pull"
 	"helm-deep-pack/internal/push"
-	"helm-deep-pack/internal/validation"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -231,16 +229,6 @@ func resetCmdVars(cmdName string) {
 	default:
 		panic("resetCmdVars: unknown command " + cmdName)
 	}
-}
-
-func validConcurrencyValues() []string {
-	values := []string{"1"}
-	for _, value := range []int{4, 8, 16} {
-		if validation.ValidateConcurrency("--concurrency", value) == nil {
-			values = append(values, fmt.Sprintf("%d", value))
-		}
-	}
-	return values
 }
 
 func CleanupChartDirs() {

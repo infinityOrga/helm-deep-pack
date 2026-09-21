@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,10 +46,10 @@ spec:
 		t.Fatalf("discoverOptionalChartImages() error = %v", err)
 	}
 
-	if got, want := discovery.Images, []string{"quay.io/example/sidecar:v2"}; !equalStrings(got, want) {
+	if got, want := discovery.Images, []string{"quay.io/example/sidecar:v2"}; !slices.Equal(got, want) {
 		t.Fatalf("optional images = %v, want %v", got, want)
 	}
-	if got, want := discovery.OptionalFlags["quay.io/example/sidecar:v2"], []string{".Values.sidecar.enabled"}; !equalStrings(got, want) {
+	if got, want := discovery.OptionalFlags["quay.io/example/sidecar:v2"], []string{".Values.sidecar.enabled"}; !slices.Equal(got, want) {
 		t.Fatalf("optional flags = %v, want %v", got, want)
 	}
 
@@ -88,7 +89,7 @@ spec:
 	if err != nil {
 		t.Fatalf("discoverOptionalChartImages() error = %v", err)
 	}
-	if got, want := discovery.Images, []string{"quay.io/example/optional:v1"}; !equalStrings(got, want) {
+	if got, want := discovery.Images, []string{"quay.io/example/optional:v1"}; !slices.Equal(got, want) {
 		t.Fatalf("optional images = %v, want %v (warnings: %v)", got, want, discovery.Warnings)
 	}
 	if !strings.Contains(strings.Join(discovery.Warnings, "\n"), "guard.labels must be specified") {
@@ -136,7 +137,7 @@ spec:
 	if err != nil {
 		t.Fatalf("discoverOptionalChartImages() error = %v", err)
 	}
-	if got, want := discovery.Images, []string{"quay.io/example/optional:v1"}; !equalStrings(got, want) {
+	if got, want := discovery.Images, []string{"quay.io/example/optional:v1"}; !slices.Equal(got, want) {
 		t.Fatalf("optional images = %v, want %v (warnings: %v)", got, want, discovery.Warnings)
 	}
 	if !strings.Contains(strings.Join(discovery.Warnings, "\n"), "broken.yaml") {
@@ -215,7 +216,7 @@ spec:
 	if err != nil {
 		t.Fatalf("discoverOptionalChartImages() error = %v", err)
 	}
-	if got, want := discovery.OptionalFlags["quay.io/example/metrics:v1"], []string{".Values.first.enabled", ".Values.second.enabled"}; !equalStrings(got, want) {
+	if got, want := discovery.OptionalFlags["quay.io/example/metrics:v1"], []string{".Values.first.enabled", ".Values.second.enabled"}; !slices.Equal(got, want) {
 		t.Fatalf("conjunction flags = %v, want %v", got, want)
 	}
 }
@@ -297,7 +298,7 @@ func TestAttributeOptionalImagesUsesPartialProbeManifest(t *testing.T) {
 		map[string]struct{}{"quay.io/example/optional:v1": {}},
 	)
 
-	if got, want := flags["quay.io/example/optional:v1"], []string{".Values.first"}; !equalStrings(got, want) {
+	if got, want := flags["quay.io/example/optional:v1"], []string{".Values.first"}; !slices.Equal(got, want) {
 		t.Fatalf("flags = %v, want %v", flags, want)
 	}
 	if !strings.Contains(strings.Join(warnings, "\n"), "guard failed") {
@@ -318,10 +319,10 @@ func TestImageInventoryPreservesOrderAndRequiredStatus(t *testing.T) {
 		},
 	)
 
-	if got, want := got.requiredImages, []string{"quay.io/example/shared:v1"}; !equalStrings(got, want) {
+	if got, want := got.requiredImages, []string{"quay.io/example/shared:v1"}; !slices.Equal(got, want) {
 		t.Fatalf("requiredImages = %v, want %v", got, want)
 	}
-	if got, want := got.optionalImages, []string{"quay.io/example/annotation:v1", "quay.io/example/optional:v1"}; !equalStrings(got, want) {
+	if got, want := got.optionalImages, []string{"quay.io/example/annotation:v1", "quay.io/example/optional:v1"}; !slices.Equal(got, want) {
 		t.Fatalf("optionalImages = %v, want %v", got, want)
 	}
 
@@ -397,7 +398,7 @@ func TestExtractChartAnnotationImagesRecursesThroughDependencies(t *testing.T) {
 		"quay.io/example/child:v1",
 		"quay.io/example/grandchild:v1",
 	}
-	if !equalStrings(got, want) {
+	if !slices.Equal(got, want) {
 		t.Fatalf("recursive annotation images = %v, want %v", got, want)
 	}
 }
@@ -428,16 +429,4 @@ version: 0.1.0
 		}
 	}
 	return chartDir
-}
-
-func equalStrings(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for index := range want {
-		if got[index] != want[index] {
-			return false
-		}
-	}
-	return true
 }

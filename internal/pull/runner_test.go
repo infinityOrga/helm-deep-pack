@@ -104,26 +104,6 @@ func matchesPattern(s, pattern string) bool {
 	return re.MatchString(s)
 }
 
-func TestResolveChartVersionSkipsPrereleases(t *testing.T) {
-	h := newRunnerTestHarness(t)
-	h.runner.searchRepoVersions = func(context.Context, string, string) ([]searchResult, error) {
-		return []searchResult{
-			{Version: "4.0.0-rc.1"},
-			{Version: "3.10.0"},
-			{Version: "3.9.0"},
-		}, nil
-	}
-
-	got, err := h.runner.resolveChartVersion(context.Background(), "https://example.invalid", "openebs")
-	if err != nil {
-		t.Fatalf("resolveChartVersion() error = %v", err)
-	}
-
-	if got != "3.10.0" {
-		t.Fatalf("resolveChartVersion() = %q, want %q", got, "3.10.0")
-	}
-}
-
 func TestLoadConfiguredReposMissingFileIsNotAnError(t *testing.T) {
 	t.Setenv("HELM_REPOSITORY_CONFIG", filepath.Join(t.TempDir(), "repositories.yaml"))
 
@@ -935,21 +915,6 @@ version: 0.1.0
 		ValuesFiles: []string{"values-b.yaml"},
 	}); err == nil {
 		t.Fatal("loadChart() second call error = nil, want miss with different values overrides")
-	}
-}
-
-func TestResolveChartVersionHonorsContextCancellation(t *testing.T) {
-	h := newRunnerTestHarness(t)
-	h.runner.searchRepoVersions = func(ctx context.Context, _, _ string) ([]searchResult, error) {
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	if _, err := h.runner.resolveChartVersion(ctx, "https://example.invalid", "openebs"); err == nil {
-		t.Fatal("resolveChartVersion() error = nil, want cancellation error")
 	}
 }
 

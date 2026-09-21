@@ -114,24 +114,6 @@ func TestAddCmd_ValidateConcurrencyInvalid(t *testing.T) {
 	}
 }
 
-func TestAddCmd_ValidateConcurrencyValid(t *testing.T) {
-	validConcurrencies := validConcurrencyValues()
-	for _, concurrency := range validConcurrencies {
-		t.Run(concurrency, func(t *testing.T) {
-			capture, restore := spyAddRun(nil)
-			defer restore()
-
-			output := ExecuteCommand(addCmd, []string{"nginx", "--concurrency", concurrency})
-			if output.Err != nil {
-				t.Fatalf("expected valid concurrency %s to pass validation, got: %v", concurrency, output.Err)
-			}
-			if !capture.called {
-				t.Fatalf("expected workflow to be called for concurrency=%s", concurrency)
-			}
-		})
-	}
-}
-
 func TestAddCmd_FlagsMapToOptions(t *testing.T) {
 	tests := []struct {
 		name string

@@ -317,7 +317,8 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 	colorOutput := terminal.IsWriter(out)
 
 	for {
-		lines := fitRenderLines(model.render(), terminal.Width(out))
+		width, _ := terminal.Size(out)
+		lines := fitRenderLines(model.render(), width)
 		if colorOutput {
 			lines = colorizeRenderLines(lines, model)
 		}
@@ -328,11 +329,11 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 		}
 		for i, line := range lines {
 			if i > 0 {
-				if err := terminal.WriteString(out, "\r\n"); err != nil {
+				if _, err := io.WriteString(out, "\r\n"); err != nil {
 					return nil, false, fmt.Errorf("write interactive output: %w", err)
 				}
 			}
-			if err := terminal.WriteString(out, "\r"+line); err != nil {
+			if _, err := io.WriteString(out, "\r"+line); err != nil {
 				return nil, false, fmt.Errorf("write interactive output: %w", err)
 			}
 		}
@@ -341,7 +342,7 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 		k, err := readKey(br)
 		if err != nil {
 			if err == io.EOF {
-				if err := terminal.WriteString(out, "\r\n"); err != nil {
+				if _, err := io.WriteString(out, "\r\n"); err != nil {
 					return nil, false, fmt.Errorf("write interactive output: %w", err)
 				}
 				return nil, true, nil
@@ -360,12 +361,12 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 			model.toggleAll()
 		case keyConfirm:
 			selected := model.selectedSpecs()
-			if err := terminal.WriteString(out, "\r\n"); err != nil {
+			if _, err := io.WriteString(out, "\r\n"); err != nil {
 				return nil, false, fmt.Errorf("write interactive output: %w", err)
 			}
 			return selected, false, nil
 		case keyCancel:
-			if err := terminal.WriteString(out, "\r\n"); err != nil {
+			if _, err := io.WriteString(out, "\r\n"); err != nil {
 				return nil, false, fmt.Errorf("write interactive output: %w", err)
 			}
 			return nil, true, nil

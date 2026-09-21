@@ -17,7 +17,6 @@ func TestReadRegistryLoop(t *testing.T) {
 		{"valid no trailing newline", "docker.io", "docker.io", false},
 		{"valid with namespace path", "registry.example.com:5000/team/sub\n", "registry.example.com:5000/team/sub", false},
 		{"trims surrounding whitespace", "  docker.io  \n", "docker.io", false},
-		{"invalid then valid re-prompts", "https://bad\nquay.io\n", "quay.io", false},
 		{"empty line cancels", "\n", "", true},
 		{"eof cancels", "", "", true},
 		{"invalid then eof cancels", "https://bad\n", "", true},

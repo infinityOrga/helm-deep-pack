@@ -43,14 +43,6 @@ func (e *repoLookupError) Error() string {
 	}
 }
 
-func helmSearchRepoVersions(ctx context.Context, repoURL, chart string) ([]searchResult, error) {
-	index, err := loadRepoIndex(ctx, repoURL)
-	if err != nil {
-		return nil, err
-	}
-	return index[chart], nil
-}
-
 func loadRepoIndex(ctx context.Context, repoURL string) (map[string][]searchResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(repoURL, "/")+"/index.yaml", nil)
 	if err != nil {
@@ -89,26 +81,6 @@ func looksLikeNonHelmRepo(contentType string, body []byte) bool {
 		strings.Contains(lower, "<html") ||
 		strings.Contains(lower, "<!doctype") ||
 		strings.Contains(lower, "example domain")
-}
-
-func (r Runner) resolveChartVersion(ctx context.Context, repoURL, chart string) (string, error) {
-	search := r.searchRepoVersions
-	if search == nil {
-		search = helmSearchRepoVersions
-	}
-
-	results, err := search(ctx, repoURL, chart)
-	if err != nil {
-		return "", err
-	}
-
-	for _, result := range results {
-		if isStableVersion(result.Version) {
-			return result.Version, nil
-		}
-	}
-
-	return "", fmt.Errorf("no stable version found for %s/%s", repoURL, chart)
 }
 
 func selectStableVersion(results []searchResult) (string, error) {

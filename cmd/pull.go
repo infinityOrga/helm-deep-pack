@@ -72,9 +72,6 @@ var pullCmd = &cobra.Command{
 				}
 			}
 		}
-		if err := validation.ValidateVersion("--version", pullVersion); err != nil {
-			return err
-		}
 		if err := validation.ValidateConcurrency("--concurrency", pullConcurrency); err != nil {
 			return err
 		}

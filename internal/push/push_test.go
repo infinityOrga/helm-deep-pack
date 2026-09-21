@@ -80,6 +80,17 @@ func pushImagesWithEngineForTest(t *testing.T, engine Engine, opts Options, stat
 	return engine.pushImages(context.Background(), opts, engine.probeClient, status...)
 }
 
+func writePushManifestFixture(t *testing.T, dir string, specs []pushspec.ArchiveSpec) {
+	t.Helper()
+	data, err := json.Marshal(pushspec.PushManifest{LayoutDir: "oci-layout", Images: specs})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "push_images.json"), append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
 func TestPushImagesUsesManifestDigests(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
@@ -101,7 +112,7 @@ func TestPushImagesUsesManifestDigests(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{
+	writePushManifestFixture(t, dir, []pushspec.ArchiveSpec{
 		{
 			Image:     "quay.io/example/api:v1",
 			Target:    "example/api:v1",
@@ -113,13 +124,6 @@ func TestPushImagesUsesManifestDigests(t *testing.T) {
 			OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		},
 	})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 4, All: true}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
@@ -176,17 +180,11 @@ func TestPushImagesUsesRegistryNamespacePathAsDestinationPrefix(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{{
+	writePushManifestFixture(t, dir, []pushspec.ArchiveSpec{{
 		Image:     "busybox:1.36",
 		Target:    "library/busybox:1.36",
 		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000/team/sub", InputDir: dir, Concurrency: 1, All: true}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
@@ -221,17 +219,11 @@ func TestPushImagesResolvesDefaultInputDir(t *testing.T) {
 		return layout.Path(path), nil
 	}
 
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{{
+	writePushManifestFixture(t, helperDir, []pushspec.ArchiveSpec{{
 		Image:     "busybox:1.36",
 		Target:    "library/busybox:1.36",
 		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(helperDir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: "", Concurrency: 2, All: true}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
@@ -273,17 +265,11 @@ func TestPushImagesFallsBackToWorkingDirWhenExecutableDirHasNoManifest(t *testin
 		return layout.Path(path), nil
 	}
 
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{{
+	writePushManifestFixture(t, workingDir, []pushspec.ArchiveSpec{{
 		Image:     "busybox:1.36",
 		Target:    "library/busybox:1.36",
 		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workingDir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: "", Concurrency: 2, All: true}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
@@ -400,17 +386,11 @@ func TestPushImagesReportsProgress(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{{
+	writePushManifestFixture(t, dir, []pushspec.ArchiveSpec{{
 		Image:     "busybox:1.36",
 		Target:    "library/busybox:1.36",
 		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	status := new(bytes.Buffer)
 	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1, All: true}, status); err != nil {
@@ -446,23 +426,16 @@ func TestPushImagesInteractiveRequiresTerminal(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{
+	writePushManifestFixture(t, dir, []pushspec.ArchiveSpec{
 		{
 			Image:     "busybox:1.36",
 			Target:    "library/busybox:1.36",
 			OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		},
 	})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	// Use strings.NewReader which is not a terminal
-	err = pushImagesWithEngineForTest(t, engine, Options{
+	err := pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "registry.local:5000",
 		InputDir:    dir,
 		Concurrency: 1,
@@ -520,19 +493,13 @@ func TestEngineUsesTerminalSeamForImageSelection(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{{
+	writePushManifestFixture(t, dir, []pushspec.ArchiveSpec{{
 		Image:     "busybox:1.36",
 		Target:    "library/busybox:1.36",
 		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
-	err = pushImagesWithEngineForTest(t, engine, Options{
+	err := pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "registry.local:5000",
 		InputDir:    dir,
 		Concurrency: 1,
@@ -616,19 +583,13 @@ func TestPushImagesAcceptsRegistryServingHTMLErrorBody(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{{
+	writePushManifestFixture(t, dir, []pushspec.ArchiveSpec{{
 		Image:     "busybox:1.36",
 		Target:    "library/busybox:1.36",
 		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
-	err = pushImagesWithEngineForTest(t, engine, Options{
+	err := pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "quay.io",
 		InputDir:    dir,
 		Concurrency: 1,
@@ -658,19 +619,13 @@ func TestPushImagesAcceptsRegistryPreflightBeforeSelection(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	manifest, err := pushspec.GeneratePushManifest([]pushspec.ArchiveSpec{{
+	writePushManifestFixture(t, dir, []pushspec.ArchiveSpec{{
 		Image:     "busybox:1.36",
 		Target:    "library/busybox:1.36",
 		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}})
-	if err != nil {
-		t.Fatalf("pushspec.GeneratePushManifest() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, pushspec.PushManifestFileName()), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
-	err = pushImagesWithEngineForTest(t, engine, Options{
+	err := pushImagesWithEngineForTest(t, engine, Options{
 		Registry:    "registry.local:5000",
 		InputDir:    dir,
 		Concurrency: 1,

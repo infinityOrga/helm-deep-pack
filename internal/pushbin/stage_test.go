@@ -27,7 +27,10 @@ func TestStageForPlatform_DefaultsToHostPlatform(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StageForPlatform() error = %v", err)
 	}
-	wantName := helperBinaryName(runtime.GOOS)
+	wantName := "push_images"
+	if runtime.GOOS == "windows" {
+		wantName = "push_images.exe"
+	}
 	if filepath.Base(path) != wantName {
 		t.Fatalf("staged path base = %q, want %q", filepath.Base(path), wantName)
 	}
@@ -57,7 +60,7 @@ func TestStageForPlatform_FailsOnChecksumMismatch(t *testing.T) {
 		parseChecksumsText = originalParse
 	}()
 
-	assetName := helperArchiveName("1.2.3", "linux", "amd64")
+	assetName := "push_images_1.2.3_linux_amd64.tar.gz"
 	archiveData := buildTarGz(t, "push_images", []byte("helper"))
 	lookupRelease = func(context.Context, upgrade.ReleaseLookupOptions, string) (upgrade.ReleaseMetadata, error) {
 		return upgrade.ReleaseMetadata{
@@ -124,7 +127,7 @@ func TestStageForPlatform_DevBuildsHelperLocally(t *testing.T) {
 		return upgrade.ReleaseMetadata{}, fmt.Errorf("lookup should not be called for dev local build")
 	}
 	buildLocalHelperBinary = func(_ context.Context, outputDir, goos, goarch string) (string, error) {
-		return filepath.Join(outputDir, helperBinaryName(goos)), nil
+		return filepath.Join(outputDir, "push_images"), nil
 	}
 
 	outDir := t.TempDir()
@@ -260,8 +263,12 @@ func stubReleaseFetcher(t *testing.T, goos, goarch, payload string) func() {
 	originalFetch := fetchReleaseAssetBytes
 	originalParse := parseChecksumsText
 
-	archiveName := helperArchiveName("1.2.3", goos, goarch)
-	entryName := helperBinaryName(goos)
+	archiveName := "push_images_1.2.3_" + goos + "_" + goarch + ".tar.gz"
+	entryName := "push_images"
+	if goos == "windows" {
+		archiveName = "push_images_1.2.3_" + goos + "_" + goarch + ".zip"
+		entryName = "push_images.exe"
+	}
 	var archiveData []byte
 	if goos == "windows" {
 		archiveData = buildZip(t, entryName, []byte(payload))

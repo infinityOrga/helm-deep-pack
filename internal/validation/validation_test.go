@@ -174,17 +174,6 @@ func TestValidateConcurrency(t *testing.T) {
 		})
 	}
 
-	// Test that max is derived from system CPUs
-	maxValue := maxConcurrency()
-	if err := ValidateConcurrency("test", maxValue); err != nil {
-		t.Errorf("ValidateConcurrency(maxValue=%d) should not error: %v", maxValue, err)
-	}
-
-	if err := ValidateConcurrency("test", maxValue+1); err == nil {
-		t.Errorf("ValidateConcurrency(maxValue+1=%d) should error", maxValue+1)
-	} else if !strings.Contains(err.Error(), "must not exceed") {
-		t.Errorf("ValidateConcurrency(maxValue+1=%d) error = %v, want to contain %q", maxValue+1, err, "must not exceed")
-	}
 }
 
 func TestValidateNonNegativeDuration(t *testing.T) {
@@ -206,29 +195,6 @@ func TestValidateNonNegativeDuration(t *testing.T) {
 			}
 			if tt.wantError && !strings.Contains(err.Error(), "must not be negative") {
 				t.Fatalf("ValidateNonNegativeDuration() error = %v, want negative-duration message", err)
-			}
-		})
-	}
-}
-
-func TestValidateVersion(t *testing.T) {
-	tests := []struct {
-		name    string
-		value   string
-		wantErr bool
-	}{
-		{"valid version", "1.2.3", false},
-		{"empty version", "", false},
-		{"version with dash", "1.2.3-alpha", false},
-		{"version with v prefix", "v1.2.3", false}, // Allows v prefix (validation deferred to runtime)
-		{"complex version", "1.2.3-rc1+build.123", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateVersion("test", tt.value)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateVersion() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

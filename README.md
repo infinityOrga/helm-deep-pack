@@ -60,8 +60,13 @@ helm-deep-pack upgrade --version 1.2.3 --yes
 ```
 
 Normal commands check GitHub for a newer CLI release at most once per week. If
-one is available, `helm-deep-pack` prints a warning with the upgrade command;
-network, cache, and release-lookup failures are ignored so they never block the
+one is available, `helm-deep-pack` prints this warning to stderr:
+
+```text
+warning: helm-deep-pack 1.3.0 is available (current: 1.2.0); run 'helm-deep-pack upgrade' to update
+```
+
+Network, cache, and release-lookup failures are ignored so they never block the
 requested command. The `upgrade` command does not perform this reminder check.
 
 ## Pull command

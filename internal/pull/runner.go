@@ -69,7 +69,6 @@ type loadedChart struct {
 type chartSourceAdapter func(ctx context.Context, opts Options) (loadedChart, error)
 
 type Runner struct {
-	searchRepoVersions     func(ctx context.Context, repo, chart string) ([]searchResult, error)
 	renderManifest         func(r Runner, ctx context.Context, opts Options) (string, error)
 	renderManifestValues   func(r Runner, ctx context.Context, opts Options, values map[string]interface{}) (string, error)
 	lintRender             func(chrt *helmchart.Chart, values chartutil.Values) (map[string]string, []string, error)
@@ -98,7 +97,6 @@ func Run(ctx context.Context, opts Options, status ...io.Writer) error {
 
 func NewRunner() Runner {
 	r := Runner{
-		searchRepoVersions: helmSearchRepoVersions,
 		renderManifest: func(r Runner, ctx context.Context, opts Options) (string, error) {
 			return r.renderChartManifest(ctx, opts)
 		},

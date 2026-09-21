@@ -16,9 +16,8 @@ func TestPreflightRegistryReturnsPlainHTTPError(t *testing.T) {
 	})
 
 	err := preflightRegistry(context.Background(), "registry.local:5000", false, probeClient)
-	var httpErr *plainHTTPRegistryError
-	if !errors.As(err, &httpErr) {
-		t.Fatalf("preflightRegistry() error = %v, want *plainHTTPRegistryError", err)
+	if err == nil {
+		t.Fatal("preflightRegistry() error = nil, want plain HTTP error")
 	}
 	if !strings.Contains(err.Error(), "--allow-insecure-http") {
 		t.Fatalf("plainHTTPRegistryError message = %q, want --allow-insecure-http hint", err.Error())

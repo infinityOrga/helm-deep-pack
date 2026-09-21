@@ -4,7 +4,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"helm-deep-pack/internal/upgrade"
-	"helm-deep-pack/internal/validation"
 )
 
 var (
@@ -20,12 +19,6 @@ var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Update this binary to the latest stable release",
 	Args:  cobra.NoArgs,
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := validation.ValidateVersion("--version", upgradeTargetVersion); err != nil {
-			return err
-		}
-		return nil
-	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logger := commandLogger(upgradeVerbose)
 		logger.Debug("upgrading binary",
