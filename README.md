@@ -59,6 +59,11 @@ Pin to a specific release:
 helm-deep-pack upgrade --version 1.2.3 --yes
 ```
 
+Normal commands check GitHub for a newer CLI release at most once per week. If
+one is available, `helm-deep-pack` prints a warning with the upgrade command;
+network, cache, and release-lookup failures are ignored so they never block the
+requested command. The `upgrade` command does not perform this reminder check.
+
 ## Pull command
 
 ```bash

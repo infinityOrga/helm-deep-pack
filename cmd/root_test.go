@@ -2,11 +2,15 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"helm-deep-pack/internal/upgrade"
 )
 
 // TestRootCmd_HasSubcommands verifies root command has the expected subcommands.
@@ -124,6 +128,95 @@ func TestRootCmd_VersionFlag(t *testing.T) {
 	combined := output.Stdout + output.Stderr
 	if !strings.Contains(combined, "helm-deep-pack") {
 		t.Fatalf("expected version output to include binary name, got: %s", combined)
+	}
+}
+
+func TestRootCmd_WarnsWhenUpdateIsAvailable(t *testing.T) {
+	originalVersion := version
+	originalCheck := checkForUpdate
+	defer func() {
+		version = originalVersion
+		checkForUpdate = originalCheck
+	}()
+	version = "1.2.0"
+	checkForUpdate = func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
+		return upgrade.UpdateNotice{CurrentVersion: "1.2.0", LatestVersion: "1.3.0"}, nil
+	}
+
+	tempCmd := &cobra.Command{
+		Use: "update-test",
+		Run: func(*cobra.Command, []string) {},
+	}
+	rootCmd.AddCommand(tempCmd)
+	defer rootCmd.RemoveCommand(tempCmd)
+
+	output := ExecuteCommand(tempCmd, nil)
+	if output.Err != nil {
+		t.Fatalf("update-test failed: %v", output.Err)
+	}
+	if !strings.Contains(output.Stderr, "warning: helm-deep-pack 1.3.0 is available") {
+		t.Fatalf("expected update warning, got: %q", output.Stderr)
+	}
+	if !strings.Contains(output.Stderr, "helm-deep-pack upgrade") {
+		t.Fatalf("expected upgrade hint, got: %q", output.Stderr)
+	}
+}
+
+func TestRootCmd_UpdateCheckFailureDoesNotBlockCommand(t *testing.T) {
+	originalVersion := version
+	originalCheck := checkForUpdate
+	defer func() {
+		version = originalVersion
+		checkForUpdate = originalCheck
+	}()
+	version = "1.2.0"
+	checkForUpdate = func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
+		return upgrade.UpdateNotice{}, errors.New("network unavailable")
+	}
+
+	ran := false
+	tempCmd := &cobra.Command{
+		Use: "update-failure-test",
+		Run: func(*cobra.Command, []string) { ran = true },
+	}
+	rootCmd.AddCommand(tempCmd)
+	defer rootCmd.RemoveCommand(tempCmd)
+
+	output := ExecuteCommand(tempCmd, nil)
+	if output.Err != nil {
+		t.Fatalf("update-failure-test failed: %v", output.Err)
+	}
+	if !ran {
+		t.Fatal("command did not run after update check failure")
+	}
+	if output.Stderr != "" {
+		t.Fatalf("unexpected stderr after update check failure: %q", output.Stderr)
+	}
+}
+
+func TestRootCmd_SkipsUpdateCheckForUpgrade(t *testing.T) {
+	originalVersion := version
+	originalCheck := checkForUpdate
+	originalUpgradeRun := upgradeRun
+	defer func() {
+		version = originalVersion
+		checkForUpdate = originalCheck
+		upgradeRun = originalUpgradeRun
+	}()
+	version = "1.2.0"
+	called := false
+	checkForUpdate = func(context.Context, upgrade.UpdateCheckOptions) (upgrade.UpdateNotice, error) {
+		called = true
+		return upgrade.UpdateNotice{CurrentVersion: "1.2.0", LatestVersion: "1.3.0"}, nil
+	}
+	upgradeRun = func(context.Context, upgrade.Options, ...io.Writer) error { return nil }
+
+	output := ExecuteCommand(upgradeCmd, nil)
+	if output.Err != nil {
+		t.Fatalf("upgrade failed: %v", output.Err)
+	}
+	if called {
+		t.Fatal("upgrade command performed the update check")
 	}
 }
 

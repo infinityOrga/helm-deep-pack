@@ -1,18 +1,22 @@
 package cmd
 
 import (
-	"helm-deep-pack/internal/push"
-	"helm-deep-pack/internal/upgrade"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"helm-deep-pack/internal/push"
+	"helm-deep-pack/internal/upgrade"
+
 	"github.com/spf13/cobra"
 )
 
 var version = "dev"
+
+var checkForUpdate = upgrade.CheckForUpdate
 
 // commandLogger returns a stderr logger; verbose enables debug-level output.
 func commandLogger(verbose bool) *slog.Logger {
@@ -55,12 +59,31 @@ func init() {
 	rootCmd.SetVersionTemplate("helm-deep-pack {{.Version}}\n")
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		cmd.SilenceUsage = true
+		warnAboutUpdate(cmd)
 	}
 	rootCmd.AddCommand(pullCmd)
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(pushCmd)
 	rootCmd.AddCommand(upgradeCmd)
 	rootCmd.AddCommand(upgradeHelperCmd)
+}
+
+func warnAboutUpdate(cmd *cobra.Command) {
+	if cmd.Name() == "upgrade" || cmd.Name() == "upgrade-helper" {
+		return
+	}
+	if version := strings.TrimSpace(Version()); version == "" || strings.EqualFold(version, "dev") {
+		return
+	}
+
+	notice, err := checkForUpdate(cmd.Context(), upgrade.UpdateCheckOptions{
+		ReleaseLookupOptions: upgrade.DefaultReleaseLookupOptions(Version()),
+	})
+	if err != nil || notice.LatestVersion == "" {
+		return
+	}
+
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: helm-deep-pack %s is available (current: %s); run 'helm-deep-pack upgrade' to update\n", notice.LatestVersion, notice.CurrentVersion)
 }
 
 func runPushHelperIfNeeded(args []string, in io.Reader, out, errOut io.Writer) (bool, error) {
