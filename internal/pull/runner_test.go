@@ -943,11 +943,50 @@ entries:
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "not found in repo") {
-		t.Fatalf("error should indicate repo miss, got: %s", errStr)
+	if !strings.Contains(errStr, `chart "missing" was not found`) {
+		t.Fatalf("error should indicate chart miss, got: %s", errStr)
 	}
-	if !strings.Contains(errStr, "charts: nginx, redis") {
+	if !strings.Contains(errStr, "Available charts by repository:") || !strings.Contains(errStr, "nginx") || !strings.Contains(errStr, "redis") {
 		t.Fatalf("error should list available charts, got: %s", errStr)
+	}
+}
+
+func TestRunnerNoOptionalSkipsDiscoveryAndOptionalArchive(t *testing.T) {
+	h := newRunnerTestHarness(t)
+	var discovered, optionalArchived bool
+	var manifestSpecs []pushspec.ArchiveSpec
+	h.runner.localChartSource = func(_ context.Context, opts Options) (loadedChart, error) {
+		return testLoadedChart("demo", "1.0.0", opts.Chart), nil
+	}
+	h.runner.extractChartImages = func(context.Context, Options) ([]string, error) { return nil, nil }
+	h.runner.renderManifest = func(Runner, context.Context, Options) (string, error) { return "manifest", nil }
+	h.runner.extractImages = func(string) ([]string, error) { return []string{"busybox:1.36"}, nil }
+	h.runner.discoverOptionalImages = func(context.Context, Options, []string) (optionalImageDiscovery, error) {
+		discovered = true
+		return optionalImageDiscovery{Images: []string{"quay.io/example/optional:v1"}}, nil
+	}
+	h.runner.archiveImages = func(_ context.Context, images []string, _ string, _ int, _ ...io.Writer) ([]pushspec.ArchiveSpec, error) {
+		return []pushspec.ArchiveSpec{{Image: images[0], Target: "library/busybox:1.36", OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, nil
+	}
+	h.runner.archiveOptionalImages = func(context.Context, []string, string, int, ...io.Writer) ([]pushspec.ArchiveSpec, []push.ArchiveFailure, error) {
+		optionalArchived = true
+		return nil, nil, nil
+	}
+	h.runner.writePushManifest = func(_ string, specs []pushspec.ArchiveSpec) error {
+		manifestSpecs = specs
+		return nil
+	}
+	h.runner.stageChartArchive = func(_ loadedChart, _ string) (string, error) { return "chart.tgz", nil }
+	h.runner.stagePushBinary = func(context.Context, string, string, string) (string, error) { return "push_images", nil }
+
+	if err := h.runner.Run(context.Background(), Options{Chart: "demo", OutputDir: t.TempDir(), Concurrency: 1, NoOptional: true}); err != nil {
+		t.Fatalf("Runner.Run() error = %v", err)
+	}
+	if discovered || optionalArchived {
+		t.Fatalf("discovered=%v optionalArchived=%v, want false/false", discovered, optionalArchived)
+	}
+	if len(manifestSpecs) != 1 || manifestSpecs[0].Optional || manifestSpecs[0].Image != "busybox:1.36" {
+		t.Fatalf("push manifest specs = %#v, want only required busybox", manifestSpecs)
 	}
 }
 

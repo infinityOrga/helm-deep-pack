@@ -30,17 +30,130 @@ type repoLookupError struct {
 	requestedVer string
 	charts       []string
 	versions     []string
+	repositories []repositoryCharts
+	failures     []string
+}
+
+type repositoryCharts struct {
+	name   string
+	url    string
+	charts []string
 }
 
 func (e *repoLookupError) Error() string {
 	switch e.kind {
 	case repoLookupKindMissingChart:
-		return fmt.Sprintf("chart %q not found in repo %q; charts: %s", e.chart, e.repo, strings.Join(e.charts, ", "))
+		var message strings.Builder
+		if len(e.failures) > 0 {
+			fmt.Fprintf(&message, "could not confirm whether chart %q is available", e.chart)
+		} else {
+			fmt.Fprintf(&message, "chart %q was not found", e.chart)
+		}
+		if suggestions := suggestChartNames(e.chart, e.availableNames()); len(suggestions) > 0 {
+			message.WriteString("\nDid you mean:\n")
+			for _, suggestion := range suggestions {
+				fmt.Fprintf(&message, "  %s\n", suggestion)
+			}
+		}
+		if len(e.repositories) > 0 {
+			message.WriteString("Available charts by repository:\n")
+			for _, repository := range e.repositories {
+				label := repository.name
+				if repository.url != "" && repository.url != repository.name {
+					label += " (" + repository.url + ")"
+				}
+				fmt.Fprintf(&message, "  %s:\n", label)
+				if len(repository.charts) == 0 {
+					message.WriteString("    (no chart names listed)\n")
+				}
+				for _, name := range repository.charts {
+					fmt.Fprintf(&message, "    %s\n", name)
+				}
+			}
+		}
+		if len(e.failures) > 0 {
+			message.WriteString("Repository lookup failures:\n")
+			for _, failure := range e.failures {
+				fmt.Fprintf(&message, "  %s\n", failure)
+			}
+		}
+		return strings.TrimRight(message.String(), "\n")
 	case repoLookupKindVersionMissing:
 		return fmt.Sprintf("chart %q found in repo %q, version %q missing; versions: %s", e.chart, e.repo, e.requestedVer, strings.Join(e.versions, ", "))
 	default:
 		return "repository lookup failed"
 	}
+}
+
+func (e *repoLookupError) availableNames() []string {
+	names := make(map[string]struct{}, len(e.charts))
+	for _, name := range e.charts {
+		names[name] = struct{}{}
+	}
+	for _, repository := range e.repositories {
+		for _, name := range repository.charts {
+			names[name] = struct{}{}
+		}
+	}
+	return sortedKeys(names)
+}
+
+func suggestChartNames(query string, names []string) []string {
+	query = strings.ToLower(query)
+	limit := len(query) / 3
+	if limit < 2 {
+		limit = 2
+	}
+	type match struct {
+		name     string
+		distance int
+	}
+	matches := make([]match, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		distance := editDistance(query, strings.ToLower(name))
+		if distance <= limit {
+			matches = append(matches, match{name: name, distance: distance})
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].distance == matches[j].distance {
+			return matches[i].name < matches[j].name
+		}
+		return matches[i].distance < matches[j].distance
+	})
+	if len(matches) > 3 {
+		matches = matches[:3]
+	}
+	out := make([]string, 0, len(matches))
+	for _, candidate := range matches {
+		out = append(out, candidate.name)
+	}
+	return out
+}
+
+func editDistance(a, b string) int {
+	previous := make([]int, len(b)+1)
+	for j := range previous {
+		previous[j] = j
+	}
+	for i, left := range a {
+		current := make([]int, len(b)+1)
+		current[0] = i + 1
+		for j, right := range b {
+			cost := 0
+			if left != right {
+				cost = 1
+			}
+			current[j+1] = min(current[j]+1, previous[j+1]+1, previous[j]+cost)
+		}
+		previous = current
+	}
+	return previous[len(b)]
 }
 
 func loadRepoIndex(ctx context.Context, repoURL string) (map[string][]searchResult, error) {

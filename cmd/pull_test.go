@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestPullCmd_FlagsRegistered(t *testing.T) {
-	flags := []string{"repo", "version", "output-dir", "concurrency", "values", "set", "destination-platform", "allow-insecure-http", "verbose", "rendered-only", "optional-image-timeout"}
+	flags := []string{"repo", "version", "output-dir", "concurrency", "values", "set", "destination-platform", "allow-insecure-http", "verbose", "rendered-only", "no-optional", "optional-image-timeout"}
 	for _, flag := range flags {
 		AssertFlagExists(t, pullCmd, flag)
 	}
@@ -59,6 +59,7 @@ func TestPullCmd_FlagTypes(t *testing.T) {
 		"allow-insecure-http":    "bool",
 		"verbose":                "bool",
 		"rendered-only":          "bool",
+		"no-optional":            "bool",
 		"optional-image-timeout": "duration",
 	}
 	for flagName, expectedType := range tests {
@@ -78,6 +79,7 @@ func TestPullCmd_FlagDefaults(t *testing.T) {
 		"allow-insecure-http":    "false",
 		"verbose":                "false",
 		"rendered-only":          "false",
+		"no-optional":            "false",
 		"optional-image-timeout": "15s",
 	}
 	for flagName, expectedDefault := range tests {
@@ -370,6 +372,11 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 			name: "rendered-only",
 			args: []string{"nginx", "--rendered-only"},
 			want: pull.Options{Chart: "nginx", Concurrency: 4, RenderedOnly: true},
+		},
+		{
+			name: "no optional images",
+			args: []string{"nginx", "--no-optional"},
+			want: pull.Options{Chart: "nginx", Concurrency: 4, NoOptional: true},
 		},
 		{
 			name: "optional image timeout",

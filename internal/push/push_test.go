@@ -194,6 +194,52 @@ func TestPushImagesUsesRegistryNamespacePathAsDestinationPrefix(t *testing.T) {
 	}
 }
 
+func TestPushImagesPublishesChartEvenWhenNoImagesSelected(t *testing.T) {
+	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
+		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
+	})
+	engine := newPushTestEngine(probeClient)
+	loadedLayout := false
+	engine.loadOCILayout = func(path string) (layout.Path, error) {
+		loadedLayout = true
+		return layout.Path(path), nil
+	}
+	engine.isInteractive = func(io.Reader, io.Writer) bool { return false }
+	engine.selectImagesToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec) ([]pushspec.ArchiveSpec, bool, error) {
+		t.Fatal("image selection should be skipped when no images are staged")
+		return nil, false, nil
+	}
+	inputDir := t.TempDir()
+	var chartPushed bool
+	engine.pushChartFromBundle = func(_ context.Context, registry string, _ bool, dir string, _ io.Writer) error {
+		chartPushed = registry == "registry.local:5000/team" && dir == inputDir
+		return nil
+	}
+	writePushManifestFixture(t, inputDir, nil)
+
+	if err := pushImagesWithEngineForTest(t, engine, Options{
+		Registry: "registry.local:5000/team", InputDir: inputDir, Concurrency: 4, IncludeChart: true,
+	}); err != nil {
+		t.Fatalf("PushImages() error = %v", err)
+	}
+	if !chartPushed {
+		t.Fatal("expected chart to be published after an empty image selection")
+	}
+	if loadedLayout {
+		t.Fatal("did not expect an image layout load when the bundle has no images")
+	}
+}
+
+func TestPushChartFromBundleWarnsWhenArchiveMissing(t *testing.T) {
+	var status bytes.Buffer
+	if err := pushChartFromBundle(context.Background(), "registry.local/team", false, t.TempDir(), &status); err != nil {
+		t.Fatalf("pushChartFromBundle() error = %v", err)
+	}
+	if !strings.Contains(status.String(), "no chart archive found") || !strings.Contains(status.String(), "continuing with images") {
+		t.Fatalf("missing-chart warning = %q", status.String())
+	}
+}
+
 func TestPushImagesResolvesDefaultInputDir(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil

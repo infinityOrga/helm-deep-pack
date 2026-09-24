@@ -170,11 +170,17 @@ func loadHelmRepoChart(ctx context.Context, opts Options) (loadedChart, error) {
 
 	versions, ok := index[opts.Chart]
 	if !ok || len(versions) == 0 {
+		charts := availableChartNames(index)
 		return loadedChart{}, &repoLookupError{
 			kind:   repoLookupKindMissingChart,
 			repo:   opts.Repo,
 			chart:  opts.Chart,
-			charts: availableChartNames(index),
+			charts: charts,
+			repositories: []repositoryCharts{{
+				name:   opts.Repo,
+				url:    opts.Repo,
+				charts: charts,
+			}},
 		}
 	}
 
@@ -261,7 +267,7 @@ func (r Runner) loadChartFromConfiguredRepos(ctx context.Context, opts Options) 
 	}
 
 	var versionErr *repoLookupError
-	availableCharts := make(map[string]struct{})
+	var repositories []repositoryCharts
 	var otherErrs []string
 	for _, configRepo := range configRepos {
 		chrt, err := loadHelmRepoChart(ctx, Options{
@@ -282,9 +288,11 @@ func (r Runner) loadChartFromConfiguredRepos(ctx context.Context, opts Options) 
 				}
 				continue
 			}
-			for _, name := range lookupErr.charts {
-				availableCharts[name] = struct{}{}
-			}
+			repositories = append(repositories, repositoryCharts{
+				name:   configRepo.Name,
+				url:    configRepo.URL,
+				charts: lookupErr.charts,
+			})
 			continue
 		}
 
@@ -295,17 +303,13 @@ func (r Runner) loadChartFromConfiguredRepos(ctx context.Context, opts Options) 
 		return loadedChart{}, versionErr
 	}
 
-	if len(availableCharts) > 0 {
+	if len(repositories) > 0 || len(otherErrs) > 0 {
 		return loadedChart{}, &repoLookupError{
-			kind:   repoLookupKindMissingChart,
-			repo:   "configured repos",
-			chart:  opts.Chart,
-			charts: sortedKeys(availableCharts),
+			kind:         repoLookupKindMissingChart,
+			chart:        opts.Chart,
+			repositories: repositories,
+			failures:     otherErrs,
 		}
-	}
-
-	if len(otherErrs) > 0 {
-		return loadedChart{}, fmt.Errorf("search configured repos: %s", strings.Join(otherErrs, "; "))
 	}
 
 	return loadedChart{}, fmt.Errorf("search configured repos: no chart match for %q", opts.Chart)

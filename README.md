@@ -125,6 +125,7 @@ helm-deep-pack pull oci://registry.example.com/charts/my-app --version 1.2.3 -o 
 | `-c, --concurrency N` | Download more images in parallel; the default is `4`. |
 | `--destination-platform OS/ARCH` | Stage a helper for another platform, such as `windows/amd64`. |
 | `--rendered-only` | Only collect images from the selected render and chart annotations. |
+| `--no-optional` | Skip optional-image discovery and staging (annotation-only or synthetic-discovery-only images). |
 | `-V, --verbose` | Show additional diagnostic logging. |
 | `-k, --allow-insecure-http` | Allow an intentionally plain-HTTP chart repository. |
 
@@ -168,7 +169,9 @@ helm-deep-pack push registry.example.com/team --input-dir ./my-app-bundle --all
 ```
 
 The registry may include a namespace path, for example
-`registry.example.com/team/platform`. Images are written below that path.
+`registry.example.com/team/platform`. That path prefixes every image destination.
+Add `--include-chart` to also publish the bundled Helm chart as an OCI artifact
+at `registry.example.com/team/platform/CHART_NAME:CHART_VERSION`.
 
 In a terminal, omit `--all` to review the staged images and select what to push.
 For CI or other non-interactive environments, provide the registry explicitly
@@ -181,19 +184,20 @@ enter it when prompted.
 | --- | --- |
 | `-i, --input-dir DIR` | Point to a bundle when you are not running inside it. |
 | `-a, --all` | Push every staged image without an interactive selection. |
+| `--include-chart` | Also publish the bundled chart as a Helm-compatible OCI artifact. |
 | `-c, --concurrency N` | Push more images in parallel; the default is `4`. |
 | `-V, --verbose` | Show additional diagnostic logging. |
 | `-k, --allow-insecure-http` | Use an intentionally plain-HTTP registry, such as a local test registry. |
 
-Registry connections use HTTPS by default. Authenticate before pushing with the
-credential tool used by your registry, for example:
+Registry connections use HTTPS by default. Authenticate before pushing images
+with the credential tool used by your registry, for example:
 
 ```bash
 docker login registry.example.com
 ```
 
-Use the same login on the machine that pulls private images. For private OCI
-charts, use `helm registry login` before `pull` as shown above.
+Use the same registry credentials for chart publication; `push --include-chart`
+uses the push workflow's registry authentication.
 
 Do not use `--allow-insecure-http` for a production registry.
 

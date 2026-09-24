@@ -147,7 +147,7 @@ func TestOCIRegistryE2E(t *testing.T) {
 			manifest := checkE2EArtifacts(t, outputDir, e2eSmallChartMinImages)
 
 			pushBinary := filepath.Join(outputDir, push.PushBinaryName())
-			pushCmd := exec.Command(pushBinary, e2eRegistryHost)
+			pushCmd := exec.Command(pushBinary, e2eRegistryHost, "--all", "--include-chart", "--allow-insecure-http")
 			pushCmd.Env = os.Environ()
 			pushOutput, err := pushCmd.CombinedOutput()
 			if err != nil {
@@ -155,7 +155,23 @@ func TestOCIRegistryE2E(t *testing.T) {
 			}
 
 			verifyRegistryImages(t, e2eRegistryHost, manifest)
+			verifyRegistryChart(t, e2eRegistryHost, chartName, chartVersion)
 		})
+	}
+}
+
+func verifyRegistryChart(t *testing.T, host, chartName, chartVersion string) {
+	t.Helper()
+	client, err := registry.NewClient(registry.ClientOptPlainHTTP())
+	if err != nil {
+		t.Fatalf("create Helm registry client: %v", err)
+	}
+	result, err := client.Pull(fmt.Sprintf("oci://%s/%s:%s", host, chartName, chartVersion))
+	if err != nil {
+		t.Fatalf("pull pushed chart artifact: %v", err)
+	}
+	if result.Chart == nil || result.Chart.Meta == nil || result.Chart.Meta.Name != chartName || result.Chart.Meta.Version != chartVersion {
+		t.Fatalf("pushed chart metadata = %#v, want %s:%s", result.Chart, chartName, chartVersion)
 	}
 }
 

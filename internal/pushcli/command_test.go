@@ -28,7 +28,7 @@ func TestNewCommand_MapsArgsAndFlagsToOptions(t *testing.T) {
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{"registry.example.com/team", "-i", "/tmp/in", "-c", "8", "-a", "-k"})
+	cmd.SetArgs([]string{"registry.example.com/team", "-i", "/tmp/in", "-c", "8", "-a", "--include-chart", "-k"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -36,7 +36,7 @@ func TestNewCommand_MapsArgsAndFlagsToOptions(t *testing.T) {
 	if !called {
 		t.Fatalf("expected run to be called")
 	}
-	if got.Registry != "registry.example.com/team" || got.InputDir != "/tmp/in" || got.Concurrency != 8 || !got.All || !got.AllowInsecureHTTP {
+	if got.Registry != "registry.example.com/team" || got.InputDir != "/tmp/in" || got.Concurrency != 8 || !got.All || !got.IncludeChart || !got.AllowInsecureHTTP {
 		t.Fatalf("unexpected options: %#v", got)
 	}
 }

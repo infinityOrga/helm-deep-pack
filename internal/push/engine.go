@@ -23,11 +23,12 @@ type Engine struct {
 	loadOCILayout         func(path string) (layout.Path, error)
 	resolveExecutablePath func() (string, error)
 
-	fetchRemoteImage  func(ref name.Reference, options ...remote.Option) (v1.Image, error)
-	writeLayout       func(path string, index v1.ImageIndex) (layout.Path, error)
-	fromLayoutPath    func(path string) (layout.Path, error)
-	writeLayoutImage  func(path layout.Path, img v1.Image) error
-	appendLayoutImage func(path layout.Path, img v1.Image) error
+	fetchRemoteImage    func(ref name.Reference, options ...remote.Option) (v1.Image, error)
+	writeLayout         func(path string, index v1.ImageIndex) (layout.Path, error)
+	fromLayoutPath      func(path string) (layout.Path, error)
+	writeLayoutImage    func(path layout.Path, img v1.Image) error
+	appendLayoutImage   func(path layout.Path, img v1.Image) error
+	pushChartFromBundle func(ctx context.Context, registry string, allowInsecureHTTP bool, inputDir string, status io.Writer) error
 
 	probeClient         *http.Client
 	isInteractive       func(in io.Reader, out io.Writer) bool
@@ -44,11 +45,12 @@ func NewEngine() Engine {
 		loadOCILayout:         layout.FromPath,
 		resolveExecutablePath: os.Executable,
 
-		fetchRemoteImage:  remote.Image,
-		writeLayout:       layout.Write,
-		fromLayoutPath:    layout.FromPath,
-		writeLayoutImage:  func(path layout.Path, img v1.Image) error { return path.WriteImage(img) },
-		appendLayoutImage: func(path layout.Path, img v1.Image) error { return path.AppendImage(img) },
+		fetchRemoteImage:    remote.Image,
+		writeLayout:         layout.Write,
+		fromLayoutPath:      layout.FromPath,
+		writeLayoutImage:    func(path layout.Path, img v1.Image) error { return path.WriteImage(img) },
+		appendLayoutImage:   func(path layout.Path, img v1.Image) error { return path.AppendImage(img) },
+		pushChartFromBundle: pushChartFromBundle,
 
 		probeClient:         newRegistryProbeClient(),
 		isInteractive:       defaultIsInteractive,

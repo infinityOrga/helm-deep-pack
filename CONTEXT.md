@@ -7,11 +7,13 @@ drifting to synonyms.
 
 - **Pull phase** — Renders a Helm chart, extracts referenced container images, and
   stages them into an output bundle. Implemented in `internal/pull`.
-- **Push phase** — Transfers the staged images from an output bundle to a target
-  registry. Implemented in `internal/push`.
+- **Push phase** — Transfers staged images and, when requested, the bundled chart
+  artifact to a target registry. Implemented in `internal/push`.
 - **Output bundle** (or **bundle**) — The directory produced by a pull: the OCI
   layout, `push_images.json`, the chart archive, and a push helper. Self-contained
   unit handed to an operator (often across an air gap) to perform the push.
+- **Chart artifact** — A Helm chart published to a registry as an OCI artifact,
+  identified by the chart name and version.
 - **Push helper / staged push binary** — The executable placed inside a bundle so
   it can be run later to push images. Named `push_images` (`push_images.exe` on
   Windows).

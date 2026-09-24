@@ -208,6 +208,7 @@ func resetCmdVars(cmdName string) {
 		pullAllowHTTP = false
 		pullVerbose = false
 		pullRenderedOnly = false
+		pullNoOptional = false
 		pullOptionalImageTimeout = pull.DefaultOptionalImageTimeout
 	case "add":
 		addImages = nil

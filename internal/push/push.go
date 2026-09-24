@@ -36,6 +36,7 @@ type Options struct {
 	InputDir          string
 	Concurrency       int
 	All               bool
+	IncludeChart      bool
 	AllowInsecureHTTP bool
 	In                io.Reader
 	Out               io.Writer
@@ -88,18 +89,23 @@ func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.
 		return fmt.Errorf("read push manifest: %w", err)
 	}
 
-	layoutDirPath, err := resolveLayoutDirPath(resolvedInputDir, manifest.LayoutDir)
-	if err != nil {
-		return fmt.Errorf("resolve oci image layout path: %w", err)
-	}
-	layoutPath, err := e.loadOCILayout(layoutDirPath)
-	if err != nil {
-		return fmt.Errorf("load oci image layout: %w", err)
+	var layoutPath layout.Path
+	if len(manifest.Images) > 0 {
+		layoutDirPath, err := resolveLayoutDirPath(resolvedInputDir, manifest.LayoutDir)
+		if err != nil {
+			return fmt.Errorf("resolve oci image layout path: %w", err)
+		}
+		layoutPath, err = e.loadOCILayout(layoutDirPath)
+		if err != nil {
+			return fmt.Errorf("load oci image layout: %w", err)
+		}
 	}
 
 	var selected []pushspec.ArchiveSpec
 	if opts.All {
 		selected = manifest.Images
+	} else if len(manifest.Images) == 0 && opts.IncludeChart {
+		// Chart-only pushes have no image selection to perform.
 	} else {
 		if !e.isInteractive(opts.In, opts.Out) {
 			return fmt.Errorf("interactive selection requires terminal input and output; re-run with --all to push every image non-interactively")
@@ -114,7 +120,15 @@ func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.
 		selected = chosen
 	}
 
-	return e.pushSpecs(ctx, destRegistry, layoutPath, selected, opts.Concurrency, opts.AllowInsecureHTTP, status...)
+	if err := e.pushSpecs(ctx, destRegistry, layoutPath, selected, opts.Concurrency, opts.AllowInsecureHTTP, status...); err != nil {
+		return err
+	}
+	if opts.IncludeChart {
+		if err := e.pushChartFromBundle(ctx, destRegistry, opts.AllowInsecureHTTP, resolvedInputDir, progress.StatusWriter(status...)); err != nil {
+			return fmt.Errorf("push chart: %w", err)
+		}
+	}
+	return nil
 }
 
 // selectImagesToPush runs the interactive chooser and conflict confirmation.
@@ -142,7 +156,7 @@ func selectImagesToPush(ctx context.Context, opts Options, destRegistry string, 
 		if _, err := fmt.Fprintln(opts.Out, "nothing selected; no images pushed"); err != nil {
 			return nil, false, fmt.Errorf("write empty-selection output: %w", err)
 		}
-		return nil, false, nil
+		return nil, true, nil
 	}
 
 	conflicts := selectedConflicts(selected, classified)

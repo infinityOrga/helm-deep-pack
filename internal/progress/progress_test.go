@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"helm-deep-pack/internal/terminal"
 	"io"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,16 @@ func TestProgressRendersPerImageBytesAndStages(t *testing.T) {
 	p.End("docker.io/library/nginx:1.0")
 	if !strings.Contains(buf.String(), "1/2") {
 		t.Fatalf("expected aggregate count 1/2, got %q", buf.String())
+	}
+}
+
+func TestLineEndingMatchesConsolePlatform(t *testing.T) {
+	want := "\n"
+	if runtime.GOOS == "windows" {
+		want = "\r\n"
+	}
+	if got := lineEnding(); got != want {
+		t.Fatalf("lineEnding() = %q, want %q", got, want)
 	}
 }
 

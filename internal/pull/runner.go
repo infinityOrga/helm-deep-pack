@@ -39,6 +39,7 @@ type Options struct {
 	DestinationPlatform  string
 	HelperVersion        string
 	RenderedOnly         bool
+	NoOptional           bool
 	OptionalImageTimeout time.Duration
 }
 

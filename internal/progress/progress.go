@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"helm-deep-pack/internal/terminal"
 	"io"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -162,7 +163,7 @@ func (p *Progress) End(item string) {
 	if p.width > 0 {
 		summary = terminal.Truncate(summary, p.width-1)
 	}
-	_, _ = fmt.Fprintln(p.w, summary)
+	_, _ = fmt.Fprint(p.w, summary+lineEnding())
 	p.drawLiveBlockLocked()
 }
 
@@ -175,7 +176,7 @@ func (p *Progress) drawLiveBlockLocked() {
 	}
 	for i, line := range lines {
 		if i > 0 {
-			_, _ = fmt.Fprint(p.w, "\n")
+			_, _ = fmt.Fprint(p.w, lineEnding())
 		}
 		_, _ = fmt.Fprint(p.w, line)
 	}
@@ -196,7 +197,7 @@ func (p *Progress) Finish() {
 	defer p.mu.Unlock()
 
 	if p.lastLines > 0 {
-		_, _ = fmt.Fprintln(p.w)
+		_, _ = fmt.Fprint(p.w, lineEnding())
 	}
 	p.lastLen = 0
 	p.lastLines = 0
@@ -241,7 +242,7 @@ func (p *Progress) renderLocked(item string, finished bool) {
 	}
 	for i, line := range lines {
 		if i > 0 {
-			_, _ = fmt.Fprint(p.w, "\n")
+			_, _ = fmt.Fprint(p.w, lineEnding())
 		}
 		_, _ = fmt.Fprint(p.w, line)
 	}
@@ -274,6 +275,13 @@ func (p *Progress) formatLinesLocked() []string {
 		))
 	}
 	return lines
+}
+
+func lineEnding() string {
+	if runtime.GOOS == "windows" {
+		return "\r\n"
+	}
+	return "\n"
 }
 
 func renderBar(complete, total int64, width int) string {

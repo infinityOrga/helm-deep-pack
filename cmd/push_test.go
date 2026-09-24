@@ -7,7 +7,7 @@ import (
 )
 
 func TestPushCmd_FlagsRegistered(t *testing.T) {
-	flags := []string{"input-dir", "concurrency", "all", "allow-insecure-http", "verbose"}
+	flags := []string{"input-dir", "concurrency", "all", "include-chart", "allow-insecure-http", "verbose"}
 	for _, flag := range flags {
 		AssertFlagExists(t, pushCmd, flag)
 	}
@@ -38,6 +38,7 @@ func TestPushCmd_FlagTypes(t *testing.T) {
 		"input-dir":           "string",
 		"concurrency":         "int",
 		"all":                 "bool",
+		"include-chart":       "bool",
 		"allow-insecure-http": "bool",
 		"verbose":             "bool",
 	}
@@ -51,6 +52,7 @@ func TestPushCmd_FlagDefaults(t *testing.T) {
 		"input-dir":           "",
 		"concurrency":         "4",
 		"all":                 "false",
+		"include-chart":       "false",
 		"allow-insecure-http": "false",
 		"verbose":             "false",
 	}

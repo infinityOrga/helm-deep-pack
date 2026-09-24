@@ -67,15 +67,19 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 		return PullResult{}, fmt.Errorf("extract images: %w", err)
 	}
 
-	optionalDiscovery, discoveryErr := r.discoverOptionalImages(runCtx, opts, images)
-	if discoveryErr != nil {
-		if err := writeStatus(statusOut, "warning: optional image discovery failed; optional images may be missing: %v\n", discoveryErr); err != nil {
-			return PullResult{}, err
-		}
-	} else {
-		for _, warning := range optionalDiscovery.Warnings {
-			if err := writeStatus(statusOut, "warning: %s\n", warning); err != nil {
+	var optionalDiscovery optionalImageDiscovery
+	if !opts.NoOptional {
+		var discoveryErr error
+		optionalDiscovery, discoveryErr = r.discoverOptionalImages(runCtx, opts, images)
+		if discoveryErr != nil {
+			if err := writeStatus(statusOut, "warning: optional image discovery failed; optional images may be missing: %v\n", discoveryErr); err != nil {
 				return PullResult{}, err
+			}
+		} else {
+			for _, warning := range optionalDiscovery.Warnings {
+				if err := writeStatus(statusOut, "warning: %s\n", warning); err != nil {
+					return PullResult{}, err
+				}
 			}
 		}
 	}
@@ -94,7 +98,7 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 		}
 		appendArchivedSpecs(archived)
 	}
-	if len(inventory.optionalImages) > 0 {
+	if !opts.NoOptional && len(inventory.optionalImages) > 0 {
 		archived, failures, archiveErr := r.archiveOptionalImages(runCtx, inventory.optionalImages, outputDir, opts.Concurrency, statusOut)
 		if archiveErr != nil {
 			if err := writeStatus(statusOut, "warning: optional image archiving failed; optional images may be missing: %v\n", archiveErr); err != nil {

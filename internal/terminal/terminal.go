@@ -18,7 +18,7 @@ var IsWriter = func(w io.Writer) bool {
 	if err != nil {
 		return false
 	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return info.Mode()&os.ModeCharDevice != 0 && enableANSIOutput(f)
 }
 
 // IsReader reports whether r is a terminal-backed reader.
