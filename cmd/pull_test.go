@@ -384,6 +384,11 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 			want: pull.Options{Chart: "nginx", Concurrency: 4, OptionalImageTimeout: 2 * time.Second},
 		},
 		{
+			name: "verbose discovery diagnostics",
+			args: []string{"nginx", "--verbose"},
+			want: pull.Options{Chart: "nginx", Concurrency: 4, Verbose: true},
+		},
+		{
 			name: "with one values file",
 			args: []string{"nginx", "--values", "values.yaml"},
 			want: pull.Options{Chart: "nginx", Concurrency: 4, ValuesFiles: []string{"values.yaml"}},
@@ -428,6 +433,7 @@ func TestPullCmd_FlagsMapToOptions(t *testing.T) {
 				Concurrency: 8,
 				ValuesFiles: []string{"values.yaml"},
 				SetValues:   []string{"image.tag=v2"},
+				Verbose:     true,
 			},
 		},
 		{

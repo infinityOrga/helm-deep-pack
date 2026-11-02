@@ -127,7 +127,7 @@ func benchmarkNormalAndSyntheticDiscoveryWithTimeout(b *testing.B, chart benchma
 	if discovery, err := runner.discoverOptionalChartImages(context.Background(), opts, warmBaseline); err != nil {
 		b.Fatalf("%s warm synthetic discovery: %v", chart.name, err)
 	} else {
-		b.Logf("%s warm inventory: required=%d optional=%d warnings=%d", chart.name, len(warmBaseline), len(discovery.Images), len(discovery.Warnings))
+		b.Logf("%s warm inventory: required=%d optional=%d warnings=%d attribution-warnings=%d", chart.name, len(warmBaseline), len(discovery.Images), len(discovery.Warnings), len(discovery.AttributionWarnings))
 	}
 
 	b.ReportAllocs()
@@ -143,8 +143,8 @@ func benchmarkNormalAndSyntheticDiscoveryWithTimeout(b *testing.B, chart benchma
 		}
 		if discovery, err := runner.discoverOptionalChartImages(context.Background(), opts, baseline); err != nil {
 			b.Fatalf("%s synthetic discovery: %v", chart.name, err)
-		} else if len(discovery.Warnings) > 0 {
-			b.Logf("%s iteration %d warnings: %v", chart.name, i, discovery.Warnings)
+		} else if len(discovery.Warnings) > 0 || len(discovery.AttributionWarnings) > 0 {
+			b.Logf("%s iteration %d warnings: %v; attribution: %v", chart.name, i, discovery.Warnings, discovery.AttributionWarnings)
 		}
 	}
 }

@@ -38,7 +38,9 @@ var pullCmd = &cobra.Command{
 	Use:   "pull CHART",
 	Short: "Render a chart and mirror its images",
 	Long:  "Render a Helm chart and extract its container images. Supports local charts, HTTP(S) repositories, configured Helm repositories, and oci:// chart references. Use --no-optional to omit annotation-only and synthetic-discovery-only images from the output bundle.",
-	Args:  cobra.ExactArgs(1),
+	Example: `  # Include Cilium Hubble Relay and UI without synthetic discovery:
+  helm-deep-pack pull cilium --set hubble.enabled=true --set hubble.relay.enabled=true --set hubble.ui.enabled=true --no-optional`,
+	Args: cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		pullChart = args[0]
 
@@ -121,6 +123,7 @@ var pullCmd = &cobra.Command{
 			RenderedOnly:         pullRenderedOnly,
 			NoOptional:           pullNoOptional,
 			OptionalImageTimeout: pullOptionalImageTimeout,
+			Verbose:              pullVerbose,
 		}, cmd.ErrOrStderr())
 	},
 }
@@ -130,14 +133,14 @@ func init() {
 	pullCmd.Flags().StringVarP(&pullVersion, "version", "v", "", "Helm chart version")
 	pullCmd.Flags().StringVarP(&pullOutputDir, "output-dir", "o", "", "Directory for OCI layout artifacts and script")
 	pullCmd.Flags().IntVarP(&pullConcurrency, "concurrency", "c", 4, "Number of images to fetch and stage concurrently")
-	pullCmd.Flags().StringArrayVarP(&pullValuesFiles, "values", "f", nil, "Specify values in a YAML file (can specify multiple)")
-	pullCmd.Flags().StringArrayVar(&pullSetValues, "set", nil, "Set values on the command line (can specify multiple: key1=val1,key2=val2)")
+	pullCmd.Flags().StringArrayVarP(&pullValuesFiles, "values", "f", nil, "Load chart values to enable wanted features and include their images (can specify multiple files)")
+	pullCmd.Flags().StringArrayVar(&pullSetValues, "set", nil, "Set chart values, e.g. feature.enabled=true, to include feature images (can specify multiple: key1=val1,key2=val2)")
 	pullCmd.Flags().StringVar(&pullDestPlatform, "destination-platform", "", "Destination platform for staged push helper (os/arch, e.g. windows/amd64); defaults to current platform")
 	pullCmd.Flags().BoolVarP(&pullAllowHTTP, "allow-insecure-http", "k", false, "Allow plaintext HTTP for Helm repository URLs")
-	pullCmd.Flags().BoolVarP(&pullVerbose, "verbose", "V", false, "Enable verbose logging")
-	pullCmd.Flags().BoolVar(&pullRenderedOnly, "rendered-only", false, "Only stage images from the selected render and chart annotations")
-	pullCmd.Flags().BoolVar(&pullNoOptional, "no-optional", false, "Skip optional image discovery and staging")
-	pullCmd.Flags().DurationVar(&pullOptionalImageTimeout, "optional-image-timeout", pull.DefaultOptionalImageTimeout, "Time budget for best-effort optional image flag attribution (0 disables attribution)")
+	pullCmd.Flags().BoolVarP(&pullVerbose, "verbose", "V", false, "Show debug logs and detailed optional-image discovery diagnostics")
+	pullCmd.Flags().BoolVar(&pullRenderedOnly, "rendered-only", false, "Skip synthetic discovery; keep selected-render and chart-annotation images")
+	pullCmd.Flags().BoolVar(&pullNoOptional, "no-optional", false, "Only stage selected-render images; skip optional discovery and annotation-only images")
+	pullCmd.Flags().DurationVar(&pullOptionalImageTimeout, "optional-image-timeout", pull.DefaultOptionalImageTimeout, "Time budget for best-effort optional image flag attribution (0 skips flag hints, not image discovery)")
 }
 
 func resolveEffectiveDestination(configured string) string {

@@ -103,6 +103,41 @@ spec:
 	}
 }
 
+func TestDiscoverOptionalChartImagesSeparatesAttributionWarnings(t *testing.T) {
+	chartDir := writeInventoryTestChart(t, "optional: false\nunused: false\n", `{{- if .Values.optional }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: optional
+spec:
+  containers:
+    - name: optional
+      image: quay.io/example/optional:v1
+{{- end }}
+`)
+	runner := NewRunner()
+	render := runner.renderManifestValues
+	renders := 0
+	runner.renderManifestValues = func(r Runner, ctx context.Context, opts Options, values map[string]interface{}) (string, error) {
+		renders++
+		manifest, err := render(r, ctx, opts, values)
+		if renders > 1 && err == nil {
+			return manifest, &partialRenderError{warnings: []string{"probe-only validation warning"}}
+		}
+		return manifest, err
+	}
+	discovery, err := runner.discoverOptionalChartImages(context.Background(), Options{Chart: chartDir, OptionalImageTimeout: time.Second}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(discovery.Warnings) != 0 || !slices.Equal(discovery.AttributionWarnings, []string{"probe-only validation warning"}) {
+		t.Fatalf("discovery and attribution warnings were mixed: %#v", discovery)
+	}
+	if !slices.Equal(discovery.Images, []string{"quay.io/example/optional:v1"}) || renders != 2 {
+		t.Fatalf("discovery changed images or render count: images=%v renders=%d", discovery.Images, renders)
+	}
+}
+
 func TestDiscoverOptionalChartImagesSkipsMalformedSyntheticTemplate(t *testing.T) {
 	chartDir := writeInventoryTestChartFiles(t, `broken:
   enabled: false

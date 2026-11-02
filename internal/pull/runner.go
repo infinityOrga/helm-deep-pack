@@ -41,6 +41,7 @@ type Options struct {
 	RenderedOnly         bool
 	NoOptional           bool
 	OptionalImageTimeout time.Duration
+	Verbose              bool
 }
 
 const DefaultOptionalImageTimeout = 15 * time.Second

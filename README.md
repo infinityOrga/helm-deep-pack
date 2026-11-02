@@ -120,17 +120,43 @@ helm-deep-pack pull oci://registry.example.com/charts/my-app --version 1.2.3 -o 
 | `-r, --repo URL` | Select a remote Helm chart repository. |
 | `-v, --version VERSION` | Pin the chart version. |
 | `-o, --output-dir DIR` | Choose the bundle directory. |
-| `-f, --values FILE` | Load values from a YAML file; repeat as needed. |
-| `--set KEY=VALUE` | Override a chart value; repeat as needed. |
+| `-f, --values FILE` | Load chart values to enable wanted features and include their images; repeat as needed. |
+| `--set KEY=VALUE` | Override chart values, such as `feature.enabled=true`, to include feature images; repeat as needed. |
 | `-c, --concurrency N` | Download more images in parallel; the default is `4`. |
 | `--destination-platform OS/ARCH` | Stage a helper for another platform, such as `windows/amd64`. |
 | `--rendered-only` | Only collect images from the selected render and chart annotations. |
 | `--no-optional` | Skip optional-image discovery and staging (annotation-only or synthetic-discovery-only images). |
-| `-V, --verbose` | Show additional diagnostic logging. |
+| `--optional-image-timeout DURATION` | Budget for optional-image flag attribution (default `15s`, also capped at 32 render probes); `0` skips attribution, not discovery. |
+| `-V, --verbose` | Show debug logging and full, deduplicated optional-image discovery diagnostics. |
 | `-k, --allow-insecure-http` | Allow an intentionally plain-HTTP chart repository. |
 
 If `--output-dir` is omitted, a new directory is created in the current
 directory.
+
+### Optional discovery warnings and feature images
+
+Optional-image discovery tries synthetic settings that enable every boolean chart
+value. Those settings can be incompatible even when your selected configuration
+is valid. A short warning means optional images **may be missing**, not that the
+normal chart render failed. Use `--verbose` for the chart validation messages,
+skipped-template paths, and underlying errors. Flag-attribution limits are
+reported separately: they can leave `optionalFlags` incomplete but do not remove
+discovered images.
+
+For features you actually need, explicitly enable them with `--set` or a values
+file. For example, with Cilium 1.20.4, include Hubble Relay and both UI images:
+
+```bash
+helm-deep-pack pull cilium --version 1.20.4 --set hubble.enabled=true --set hubble.relay.enabled=true --set hubble.ui.enabled=true --no-optional
+```
+
+These images now belong to the strict selected render, so a failed download fails
+the pull rather than skipping a wanted image. `--no-optional` avoids synthetic
+discovery and stages only selected-render images; omit it if you also want
+best-effort optional discovery. `--rendered-only` also skips synthetic discovery
+but retains annotation-only images. Neither flag discovers additional features.
+Use the chart's documented values for other features; do not enable unrelated TLS,
+standalone, or authentication settings just to silence synthetic warnings.
 
 ## Add images manually
 

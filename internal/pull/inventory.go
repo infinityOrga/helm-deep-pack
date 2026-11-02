@@ -89,9 +89,10 @@ func (inventory imageInventory) applyMetadata(specs []pushspec.ArchiveSpec) {
 }
 
 type optionalImageDiscovery struct {
-	Images        []string
-	OptionalFlags map[string][]string
-	Warnings      []string
+	Images              []string
+	OptionalFlags       map[string][]string
+	Warnings            []string
+	AttributionWarnings []string
 }
 
 type valuePathPart struct {
@@ -188,7 +189,7 @@ func (r Runner) discoverOptionalChartImages(ctx context.Context, opts Options, b
 
 	flags, warnings := r.attributeOptionalImages(ctx, opts, effectiveValues, falsePaths, baselineSet, optionalSet)
 	discovery.OptionalFlags = flags
-	discovery.Warnings = append(discovery.Warnings, warnings...)
+	discovery.AttributionWarnings = warnings
 	return discovery, nil
 }
 

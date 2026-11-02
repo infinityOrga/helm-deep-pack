@@ -436,6 +436,122 @@ func TestRunnerExecuteReturnsStatusWriterError(t *testing.T) {
 	}
 }
 
+func TestRunnerOptionalImageDiagnostics(t *testing.T) {
+	validationWarning := "synthetic render validation warning: Fail: incompatible synthetic settings"
+	yamlWarning := `optional image discovery skipped unparseable rendered template "cilium/templates/hubble-ui/deployment.yaml": YAML parse error`
+	attributionWarning := "optional image flag attribution stopped after 32 render probes; some optional images may not show flag paths"
+	for _, test := range []struct {
+		name        string
+		chart       string
+		verbose     bool
+		discovery   optionalImageDiscovery
+		discoverErr error
+		want        []string
+		omit        []string
+		maxLines    int
+	}{
+		{
+			name: "clean discovery is quiet", chart: "cilium", maxLines: 2,
+			omit: []string{"warning:", "hint:", "note:"},
+		},
+		{
+			name: "synthetic issues are summarized", chart: "cilium", maxLines: 6,
+			discovery: optionalImageDiscovery{
+				Warnings:            []string{validationWarning, yamlWarning, validationWarning},
+				AttributionWarnings: []string{attributionWarning},
+			},
+			want: []string{"optional images may be missing", "selected render succeeded", "--set KEY=VALUE", "-f values.yaml", "--verbose", "--set hubble.enabled=true --set hubble.relay.enabled=true --set hubble.ui.enabled=true", "discovered images are retained", "--optional-image-timeout 0"},
+			omit: []string{validationWarning, yamlWarning, attributionWarning},
+		},
+		{
+			name: "verbose details are deduplicated", chart: "cilium", verbose: true,
+			discovery: optionalImageDiscovery{
+				Warnings:            []string{validationWarning, yamlWarning, validationWarning},
+				AttributionWarnings: []string{attributionWarning, validationWarning},
+			},
+			want: []string{validationWarning, yamlWarning, attributionWarning},
+		},
+		{
+			name: "other charts get generic guidance", chart: "example", maxLines: 4,
+			discovery: optionalImageDiscovery{Warnings: []string{validationWarning}},
+			want:      []string{"--set KEY=VALUE", "-f values.yaml", "--verbose"},
+			omit:      []string{"hubble", validationWarning},
+		},
+		{
+			name: "attribution is not missing images", chart: "cilium", maxLines: 3,
+			discovery: optionalImageDiscovery{AttributionWarnings: []string{attributionWarning}},
+			want:      []string{"note: optional image flag hints are incomplete", "discovered images are retained", "--optional-image-timeout 0"},
+			omit:      []string{"warning:", "optional images may be missing", "hubble", attributionWarning},
+		},
+		{
+			name: "discovery errors are nonfatal", chart: "example", maxLines: 4,
+			discoverErr: errors.New("discovery unavailable"),
+			want:        []string{"optional images may be missing", "--verbose"},
+			omit:        []string{"discovery unavailable"},
+		},
+		{
+			name: "verbose discovery errors retain cause", chart: "example", verbose: true,
+			discoverErr: errors.New("discovery unavailable"),
+			want:        []string{"optional image discovery failed: discovery unavailable"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newRunnerTestHarness(t)
+			h.runner.localChartSource = func(context.Context, Options) (loadedChart, error) {
+				return testLoadedChart(test.chart, "1.0.0", "local"), nil
+			}
+			h.runner.extractChartImages = func(context.Context, Options) ([]string, error) { return nil, nil }
+			h.runner.renderManifest = func(Runner, context.Context, Options) (string, error) { return "manifest", nil }
+			h.runner.extractImages = func(string) ([]string, error) { return []string{"quay.io/example/app:v1"}, nil }
+			h.runner.discoverOptionalImages = func(context.Context, Options, []string) (optionalImageDiscovery, error) {
+				discovery := test.discovery
+				discovery.Images = []string{"quay.io/example/optional:v1"}
+				return discovery, test.discoverErr
+			}
+			h.runner.archiveImages = func(_ context.Context, images []string, _ string, _ int, _ ...io.Writer) ([]pushspec.ArchiveSpec, error) {
+				return pushspec.BuildSpecs(images)
+			}
+			h.runner.archiveOptionalImages = func(_ context.Context, images []string, _ string, _ int, _ ...io.Writer) ([]pushspec.ArchiveSpec, []push.ArchiveFailure, error) {
+				specs, err := pushspec.BuildSpecs(images)
+				return specs, nil, err
+			}
+			h.runner.writePushManifest = func(string, []pushspec.ArchiveSpec) error { return nil }
+			h.runner.stageChartArchive = func(loadedChart, string) (string, error) { return "chart.tgz", nil }
+			h.runner.stagePushBinary = func(context.Context, string, string, string) (string, error) { return "push_images", nil }
+
+			var status bytes.Buffer
+			result, err := h.runner.Execute(context.Background(), Options{Chart: "local", OutputDir: t.TempDir(), Verbose: test.verbose}, &status)
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if len(result.ArchiveSpecs) != 2 || result.ArchiveSpecs[0].Optional || !result.ArchiveSpecs[1].Optional {
+				t.Fatalf("diagnostics changed staged image categories: %#v", result.ArchiveSpecs)
+			}
+			output := status.String()
+			for _, want := range test.want {
+				if strings.Count(output, want) != 1 {
+					t.Errorf("expected %q exactly once in output:\n%s", want, output)
+				}
+			}
+			for _, omit := range test.omit {
+				if strings.Contains(output, omit) {
+					t.Errorf("unexpected %q in output:\n%s", omit, output)
+				}
+			}
+			if test.maxLines > 0 && strings.Count(output, "\n") > test.maxLines {
+				t.Errorf("output exceeds %d lines:\n%s", test.maxLines, output)
+			}
+		})
+	}
+}
+
+func TestOptionalImageDiagnosticsReturnsStatusWriterError(t *testing.T) {
+	err := writeOptionalImageDiagnostics(failingWriter{}, "example", optionalImageDiscovery{Warnings: []string{"render failed"}}, false)
+	if err == nil || !strings.Contains(err.Error(), "write status") {
+		t.Fatalf("writeOptionalImageDiagnostics() error = %v, want status write attribution", err)
+	}
+}
+
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) {

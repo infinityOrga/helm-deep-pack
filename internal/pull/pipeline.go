@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func (r Runner) Run(ctx context.Context, opts Options, status ...io.Writer) error {
@@ -72,15 +73,10 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 		var discoveryErr error
 		optionalDiscovery, discoveryErr = r.discoverOptionalImages(runCtx, opts, images)
 		if discoveryErr != nil {
-			if err := writeStatus(statusOut, "warning: optional image discovery failed; optional images may be missing: %v\n", discoveryErr); err != nil {
-				return PullResult{}, err
-			}
-		} else {
-			for _, warning := range optionalDiscovery.Warnings {
-				if err := writeStatus(statusOut, "warning: %s\n", warning); err != nil {
-					return PullResult{}, err
-				}
-			}
+			optionalDiscovery.Warnings = append(optionalDiscovery.Warnings, fmt.Sprintf("optional image discovery failed: %v", discoveryErr))
+		}
+		if err := writeOptionalImageDiagnostics(statusOut, loaded.Info.Name, optionalDiscovery, opts.Verbose); err != nil {
+			return PullResult{}, err
 		}
 	}
 
@@ -138,6 +134,32 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 		ManifestPath: filepath.Join(outputDir, pushspec.PushManifestFileName()),
 	}
 	return result, nil
+}
+
+func writeOptionalImageDiagnostics(status io.Writer, chartName string, discovery optionalImageDiscovery, verbose bool) error {
+	var out strings.Builder
+	if len(discovery.Warnings) > 0 {
+		out.WriteString("warning: synthetic optional-image discovery was incomplete; optional images may be missing (selected render succeeded).\n")
+		out.WriteString("  hint: enable wanted chart features with --set KEY=VALUE or -f values.yaml; --verbose shows details.\n")
+		// ponytail: one verified chart recipe; add others only when verified.
+		if chartName == "cilium" {
+			out.WriteString("  hint: for Cilium Hubble, use --set hubble.enabled=true --set hubble.relay.enabled=true --set hubble.ui.enabled=true\n")
+		}
+	}
+	if len(discovery.AttributionWarnings) > 0 {
+		out.WriteString("note: optional image flag hints are incomplete; discovered images are retained. Use --optional-image-timeout 0 to skip attribution.\n")
+	}
+	if verbose {
+		details := appendUnique(nil, discovery.Warnings...)
+		details = appendUnique(details, discovery.AttributionWarnings...)
+		for _, detail := range details {
+			fmt.Fprintf(&out, "  detail: %s\n", strings.ReplaceAll(detail, "\n", "\n    "))
+		}
+	}
+	if out.Len() == 0 {
+		return nil
+	}
+	return writeStatus(status, "%s", out.String())
 }
 
 func writeStatus(w io.Writer, format string, args ...interface{}) error {
