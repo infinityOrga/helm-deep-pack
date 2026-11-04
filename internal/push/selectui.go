@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -25,11 +24,11 @@ type selectModel struct {
 	top          int
 	height       int
 
-	editing    bool
-	editBuf    string
-	editErr    string
-	retargeted bool
-	chartPath  string
+	editing     bool
+	editBuf     string
+	editErr     string
+	retargeted  bool
+	chartTarget string
 }
 
 func newSelectModel(images []classifiedImage, chart *classifiedChart, height int, registry string) *selectModel {
@@ -88,7 +87,7 @@ func (m *selectModel) moveDown() {
 }
 
 func (m *selectModel) toggle() {
-	if m.chart != nil && m.cursor == 0 {
+	if m.onChart() {
 		m.chartChecked = !m.chartChecked
 	} else if m.itemCount() > 0 {
 		imageIndex := m.imageIndex(m.cursor)
@@ -129,95 +128,12 @@ func (m *selectModel) selection() pushSelection {
 			sel.Retargeted = append(sel.Retargeted, image.Spec)
 		}
 	}
-	sel.ChartTarget = m.chartPath
+	sel.ChartTarget = m.chartTarget
 	return sel
-}
-
-func (m *selectModel) startEdit() {
-	if m.itemCount() == 0 {
-		return
-	}
-	if m.onChart() {
-		m.editing, m.editBuf, m.editErr = true, m.chart.Bundle.repo(), ""
-		return
-	}
-	target := pushspec.TargetRepository(m.images[m.imageIndex(m.cursor)].Spec.Target)
-	m.editing, m.editBuf, m.editErr = true, target, ""
 }
 
 func (m *selectModel) onChart() bool {
 	return m.chart != nil && m.cursor == 0
-}
-
-func (m *selectModel) saveChartEdit(reclassifyChart func(*chartBundle) classifiedChart) {
-	path, err := pushspec.ValidateTargetPath(m.editBuf)
-	if err != nil {
-		m.editErr = err.Error()
-		return
-	}
-	m.editing = false
-	if path == m.chart.Bundle.repo() {
-		return
-	}
-	bundle := *m.chart.Bundle
-	bundle.target = path
-	chart := reclassifyChart(&bundle)
-	m.chart, m.chartPath = &chart, path
-}
-
-func (m *selectModel) saveEdit(reclassify func(pushspec.ArchiveSpec) classifiedImage, reclassifyChart func(*chartBundle) classifiedChart) {
-	if m.onChart() {
-		m.saveChartEdit(reclassifyChart)
-		return
-	}
-	index := m.imageIndex(m.cursor)
-	spec, err := pushspec.Retarget(m.images[index].Spec, m.editBuf)
-	if err != nil {
-		m.editErr = err.Error()
-		return
-	}
-	if spec.Target == m.images[index].Spec.Target {
-		m.editing = false
-		return
-	}
-	specs := make([]pushspec.ArchiveSpec, len(m.images))
-	for i, image := range m.images {
-		specs[i] = image.Spec
-	}
-	specs[index] = spec
-	if a, b, found := pushspec.DuplicateTarget(specs); found {
-		m.editErr = fmt.Sprintf("duplicate target %s (%s and %s)", a.Target, a.Image, b.Image)
-		return
-	}
-	m.images[index] = reclassify(spec)
-	m.editing, m.retargeted = false, true
-}
-
-func (m *selectModel) editKey(b byte, r *bufio.Reader, reclassify func(pushspec.ArchiveSpec) classifiedImage, reclassifyChart func(*chartBundle) classifiedChart) (cancel bool) {
-	switch b {
-	case 0x03:
-		return true
-	case '\r', '\n':
-		m.saveEdit(reclassify, reclassifyChart)
-	case 0x1b:
-		if r.Buffered() == 0 {
-			m.editing = false
-			return false
-		}
-		if next, _ := r.ReadByte(); next == '[' || next == 'O' {
-			_, _ = r.ReadByte()
-		}
-	case 0x7f, 0x08:
-		if m.editBuf != "" {
-			_, size := utf8.DecodeLastRuneInString(m.editBuf)
-			m.editBuf = m.editBuf[:len(m.editBuf)-size]
-		}
-	default:
-		if b >= 0x20 {
-			m.editBuf += string([]byte{b})
-		}
-	}
-	return false
 }
 
 func (m *selectModel) selectedCount() int {
@@ -246,7 +162,7 @@ func (m *selectModel) render() []string {
 	if m.chart != nil && m.top == 0 && end > 0 {
 		lines = append(lines, "Helm chart")
 		prefix := "  "
-		if m.cursor == 0 {
+		if m.onChart() {
 			prefix = "❯ "
 		}
 		checkbox := "◯ "
@@ -255,9 +171,9 @@ func (m *selectModel) render() []string {
 		}
 		chart := m.chart.Bundle
 		label, _ := statusDisplay(m.chart.Status)
-		target := m.chartTarget(chart)
-		if m.editing && m.cursor == 0 {
-			target = m.editTarget(m.editBuf, ":"+chart.tag)
+		target := m.withRegistry(m.chartRef(chart.targetPath()))
+		if m.editing && m.onChart() {
+			target = m.withRegistry(m.editBuf + "▏:" + chart.tag)
 		}
 		lines = append(lines, prefix+checkbox+chart.name+":"+chart.version+" → "+target+"  "+label)
 	}
@@ -279,12 +195,9 @@ func (m *selectModel) render() []string {
 			if m.checked[imageIndex] {
 				checkbox = "◉ "
 			}
-			target := image.Spec.Target
-			if m.registry != "" {
-				target = m.registry + "/" + target
-			}
+			target := m.withRegistry(image.Spec.Target)
 			if m.editing && i == m.cursor {
-				target = m.editTarget(m.editBuf, strings.TrimPrefix(image.Spec.Target, pushspec.TargetRepository(image.Spec.Target)))
+				target = m.withRegistry(m.editBuf + "▏" + strings.TrimPrefix(image.Spec.Target, pushspec.TargetRepository(image.Spec.Target)))
 			}
 			body := progress.NormalizeDisplayImage(image.Spec.Image) + " → " + target
 			if image.Spec.Optional {
@@ -307,16 +220,7 @@ func (m *selectModel) render() []string {
 	return lines
 }
 
-func (m *selectModel) editTarget(buf, suffix string) string {
-	target := buf + "▏" + suffix
-	if m.registry != "" {
-		return m.registry + "/" + target
-	}
-	return target
-}
-
-func (m *selectModel) chartTarget(chart *chartBundle) string {
-	ref := chart.repo() + ":" + chart.tag
+func (m *selectModel) withRegistry(ref string) string {
 	if m.registry != "" {
 		return m.registry + "/" + ref
 	}

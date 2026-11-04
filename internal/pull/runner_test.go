@@ -154,14 +154,14 @@ func TestRunnerRunOrchestratesDependencies(t *testing.T) {
 			OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}}, nil
 	}
-	h.runner.writePushManifest = func(outputDir string, specs []pushspec.ArchiveSpec) error {
+	h.runner.writePushManifest = func(outputDir string, manifest pushspec.PushManifest) error {
 		calls = append(calls, "manifest")
 		want := []pushspec.ArchiveSpec{{
 			Image:     "quay.io/example/api:v1",
 			Target:    "example/api:v1",
 			OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}}
-		if got := specs; !reflect.DeepEqual(got, want) {
+		if got := manifest.Images; !reflect.DeepEqual(got, want) {
 			t.Fatalf("writePushManifest() specs = %v, want %v", got, want)
 		}
 		manifestPath := filepath.Join(outputDir, pushspec.PushManifestFileName())
@@ -251,7 +251,7 @@ func TestRunnerRunIncludesChartAnnotationImagesBeforeManifestImages(t *testing.T
 			OCIDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		}}, nil, nil
 	}
-	h.runner.writePushManifest = func(outputDir string, specs []pushspec.ArchiveSpec) error {
+	h.runner.writePushManifest = func(outputDir string, _ pushspec.PushManifest) error {
 		return os.WriteFile(filepath.Join(outputDir, pushspec.PushManifestFileName()), []byte("{\n  \"images\": []\n}\n"), 0o644)
 	}
 	h.runner.stagePushBinary = func(_ context.Context, outputDir, _, _ string) (string, error) {
@@ -331,7 +331,7 @@ func TestRunnerRunChecksChartAnnotationsBeforeRendering(t *testing.T) {
 			OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}}, nil
 	}
-	h.runner.writePushManifest = func(outputDir string, _ []pushspec.ArchiveSpec) error {
+	h.runner.writePushManifest = func(outputDir string, _ pushspec.PushManifest) error {
 		calls = append(calls, "manifest")
 		return os.WriteFile(filepath.Join(outputDir, pushspec.PushManifestFileName()), []byte("{}\n"), 0o644)
 	}
@@ -380,7 +380,7 @@ func TestRunnerExecuteReturnsPullResult(t *testing.T) {
 			OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}}, nil
 	}
-	h.runner.writePushManifest = func(outputDir string, _ []pushspec.ArchiveSpec) error {
+	h.runner.writePushManifest = func(outputDir string, _ pushspec.PushManifest) error {
 		return os.WriteFile(filepath.Join(outputDir, pushspec.PushManifestFileName()), []byte("{}\n"), 0o644)
 	}
 	h.runner.stagePushBinary = func(_ context.Context, outputDir, _, _ string) (string, error) {
@@ -515,7 +515,7 @@ func TestRunnerOptionalImageDiagnostics(t *testing.T) {
 				specs, err := pushspec.BuildSpecs(images)
 				return specs, nil, err
 			}
-			h.runner.writePushManifest = func(string, []pushspec.ArchiveSpec) error { return nil }
+			h.runner.writePushManifest = func(string, pushspec.PushManifest) error { return nil }
 			h.runner.stageChartArchive = func(loadedChart, string) (string, error) { return "chart.tgz", nil }
 			h.runner.stagePushBinary = func(context.Context, string, string, string) (string, error) { return "push_images", nil }
 
@@ -1088,8 +1088,8 @@ func TestRunnerNoOptionalSkipsDiscoveryAndOptionalArchive(t *testing.T) {
 		optionalArchived = true
 		return nil, nil, nil
 	}
-	h.runner.writePushManifest = func(_ string, specs []pushspec.ArchiveSpec) error {
-		manifestSpecs = specs
+	h.runner.writePushManifest = func(_ string, manifest pushspec.PushManifest) error {
+		manifestSpecs = manifest.Images
 		return nil
 	}
 	h.runner.stageChartArchive = func(_ loadedChart, _ string) (string, error) { return "chart.tgz", nil }

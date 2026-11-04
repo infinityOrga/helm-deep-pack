@@ -25,22 +25,14 @@ type PushManifest struct {
 	ChartTarget string `json:"chartTarget,omitempty"`
 }
 
-func GeneratePushManifest(specs []ArchiveSpec) (string, error) {
-	return generatePushManifest(specs, "")
-}
-
-func generatePushManifest(specs []ArchiveSpec, chartTarget string) (string, error) {
-	for _, spec := range specs {
+func GeneratePushManifest(manifest PushManifest) (string, error) {
+	for _, spec := range manifest.Images {
 		if spec.OCIDigest == "" {
 			return "", fmt.Errorf("missing oci digest for image %q", spec.Image)
 		}
 	}
 
-	data, err := json.MarshalIndent(PushManifest{
-		LayoutDir:   OCILayoutDirName(),
-		Images:      specs,
-		ChartTarget: chartTarget,
-	}, "", "  ")
+	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal push manifest: %w", err)
 	}
@@ -51,18 +43,17 @@ func PushManifestFileName() string {
 	return "push_images.json"
 }
 
-func WritePushManifest(outputDir string, specs []ArchiveSpec) error {
-	return WritePushManifestWithChart(outputDir, specs, "")
-}
-
-func WritePushManifestWithChart(outputDir string, specs []ArchiveSpec, chartTarget string) error {
-	manifest, err := generatePushManifest(specs, chartTarget)
+func WritePushManifest(outputDir string, manifest PushManifest) error {
+	if manifest.LayoutDir == "" {
+		manifest.LayoutDir = OCILayoutDirName()
+	}
+	data, err := GeneratePushManifest(manifest)
 	if err != nil {
 		return fmt.Errorf("generate push manifest: %w", err)
 	}
 
 	manifestPath := filepath.Join(outputDir, PushManifestFileName())
-	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(manifestPath, []byte(data), 0o644); err != nil {
 		return fmt.Errorf("write push manifest: %w", err)
 	}
 

@@ -205,8 +205,8 @@ func TestRun(t *testing.T) {
 					}
 					return tt.archivedSpecs, nil
 				},
-				writeManifest: func(outputDir string, specs []pushspec.ArchiveSpec, _ string) error {
-					capturedWrittenSpecs = specs
+				writeManifest: func(outputDir string, manifest pushspec.PushManifest) error {
+					capturedWrittenSpecs = manifest.Images
 					if tt.writeManifestErr != nil {
 						return tt.writeManifestErr
 					}
@@ -254,7 +254,7 @@ func TestRunRejectsDuplicateTarget(t *testing.T) {
 		archiveImages: func(context.Context, []string, string, int, ...io.Writer) ([]pushspec.ArchiveSpec, error) {
 			return []pushspec.ArchiveSpec{{Image: "docker.io/redis:7", Target: "redis:7"}}, nil
 		},
-		writeManifest: func(string, []pushspec.ArchiveSpec, string) error { wrote = true; return nil },
+		writeManifest: func(string, pushspec.PushManifest) error { wrote = true; return nil },
 	}
 	err := r.Run(context.Background(), Options{Images: []string{"docker.io/redis:7"}})
 	if err == nil || !strings.Contains(err.Error(), "quay.io/x/redis:7") || !strings.Contains(err.Error(), "docker.io/redis:7") {
@@ -274,7 +274,7 @@ func TestRunPreservesChartTarget(t *testing.T) {
 		archiveImages: func(context.Context, []string, string, int, ...io.Writer) ([]pushspec.ArchiveSpec, error) {
 			return []pushspec.ArchiveSpec{{Image: "docker.io/redis:7", Target: "redis:7"}}, nil
 		},
-		writeManifest: func(_ string, _ []pushspec.ArchiveSpec, chartTarget string) error { got = chartTarget; return nil },
+		writeManifest: func(_ string, m pushspec.PushManifest) error { got = m.ChartTarget; return nil },
 	}
 	if err := r.Run(context.Background(), Options{Images: []string{"docker.io/redis:7"}}); err != nil {
 		t.Fatal(err)

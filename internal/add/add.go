@@ -26,7 +26,7 @@ type Options struct {
 type Runner struct {
 	archiveImages func(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, error)
 	readManifest  func(inputDir string) (*pushspec.PushManifest, error)
-	writeManifest func(outputDir string, specs []pushspec.ArchiveSpec, chartTarget string) error
+	writeManifest func(outputDir string, manifest pushspec.PushManifest) error
 }
 
 func Run(ctx context.Context, opts Options, status ...io.Writer) error {
@@ -37,7 +37,7 @@ func NewRunner() Runner {
 	return Runner{
 		archiveImages: push.ArchiveImages,
 		readManifest:  pushspec.ReadPushManifest,
-		writeManifest: pushspec.WritePushManifestWithChart,
+		writeManifest: pushspec.WritePushManifest,
 	}
 }
 
@@ -79,7 +79,7 @@ func (r Runner) Run(ctx context.Context, opts Options, status ...io.Writer) erro
 	if a, b, found := pushspec.DuplicateTarget(mergedSpecs); found {
 		return fmt.Errorf("target path %q of %s collides with %s; retarget one of them", a.Target, b.Image, a.Image)
 	}
-	if err := r.writeManifest(outputDir, mergedSpecs, manifest.ChartTarget); err != nil {
+	if err := r.writeManifest(outputDir, pushspec.PushManifest{LayoutDir: manifest.LayoutDir, Images: mergedSpecs, ChartTarget: manifest.ChartTarget}); err != nil {
 		return fmt.Errorf("write updated push manifest: %w", err)
 	}
 

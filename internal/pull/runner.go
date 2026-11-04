@@ -79,7 +79,7 @@ type Runner struct {
 	discoverOptionalImages func(ctx context.Context, opts Options, baseline []string) (optionalImageDiscovery, error)
 	archiveImages          func(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, error)
 	archiveOptionalImages  func(ctx context.Context, images []string, outputDir string, concurrency int, status ...io.Writer) ([]pushspec.ArchiveSpec, []push.ArchiveFailure, error)
-	writePushManifest      func(outputDir string, specs []pushspec.ArchiveSpec) error
+	writePushManifest      func(outputDir string, manifest pushspec.PushManifest) error
 	stageChartArchive      func(loaded loadedChart, outputDir string) (string, error)
 	stagePushBinary        func(ctx context.Context, outputDir, destinationPlatform, helperVersion string) (string, error)
 	localChartSource       chartSourceAdapter

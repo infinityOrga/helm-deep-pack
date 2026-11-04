@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -392,7 +393,6 @@ func TestCopyImageToRegistrySupportsDigestReferences(t *testing.T) {
 		"example/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		nil,
-		"",
 	); err != nil {
 		t.Fatalf("engine.copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
 	}
@@ -423,7 +423,6 @@ func TestCopyImageToRegistryReportsWebsiteLikeRegistryErrors(t *testing.T) {
 		"example/api:v1",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		nil,
-		"",
 	)
 	if err == nil {
 		t.Fatal("engine.copyImageToRegistryUsingGoContainerRegistry() error = nil, want website error")
@@ -451,7 +450,6 @@ func TestCopyImageToRegistryPreservesRegistry404Errors(t *testing.T) {
 		"example/api:v1",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		nil,
-		"",
 	)
 	if err == nil {
 		t.Fatal("engine.copyImageToRegistryUsingGoContainerRegistry() error = nil, want registry 404 error")
@@ -778,7 +776,6 @@ func TestCopyImageToRegistryAllowInsecureHTTPUsesHTTPReference(t *testing.T) {
 		"example/api:v1",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		nil,
-		"",
 	); err != nil {
 		t.Fatalf("engine.copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
 	}
@@ -995,7 +992,7 @@ func TestConfirmConflictSelection(t *testing.T) {
 	})
 }
 
-func retargetPushFixture(t *testing.T, writeFn func(string, []pushspec.ArchiveSpec, string) error) (Engine, string, *[]string, *bytes.Buffer) {
+func retargetPushFixture(t *testing.T, writeFn func(string, pushspec.PushManifest) error) (Engine, string, *[]string, *bytes.Buffer) {
 	t.Helper()
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
@@ -1046,11 +1043,11 @@ func TestPushImagesSavesRetargetedManifestAndPushesNewTarget(t *testing.T) {
 }
 
 func TestPushImagesWarnsWhenRetargetedManifestWriteFails(t *testing.T) {
-	engine, dir, targets, status := retargetPushFixture(t, func(string, []pushspec.ArchiveSpec, string) error { return errors.New("disk full") })
+	engine, dir, targets, status := retargetPushFixture(t, func(string, pushspec.PushManifest) error { return errors.New("disk full") })
 	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1}, status); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
 	}
-	if !strings.Contains(status.String(), "warning: could not save retargeted images to push_images.json: disk full") {
+	if !strings.Contains(status.String(), "warning: could not save retargets to push_images.json: disk full") {
 		t.Fatalf("status = %q", status.String())
 	}
 	if len(*targets) != 1 || (*targets)[0] != "team/bb:1.36" {
@@ -1069,7 +1066,7 @@ func TestPushImagesSavesChartTargetAndPushesChartThere(t *testing.T) {
 	}
 	var pushedRepo string
 	engine.pushChartArtifact = func(_ context.Context, _ string, _ bool, chart *chartBundle, _ io.Writer) error {
-		pushedRepo = chart.repo()
+		pushedRepo = chart.targetPath()
 		return nil
 	}
 	dir := t.TempDir()
@@ -1109,7 +1106,7 @@ func TestCopyImageToRegistryReportsUploadedBytesUnderDestination(t *testing.T) {
 	tracker := progress.New(status, "pushing", 1)
 	item := host + "/example/api:v1"
 	tracker.Begin(item)
-	if err := engine.copyImageToRegistryUsingGoContainerRegistry(context.Background(), host, true, layout.Path(""), "quay.io/example/api:v1", "example/api:v1", digest.String(), tracker, item); err != nil {
+	if err := engine.copyImageToRegistryUsingGoContainerRegistry(context.Background(), host, true, layout.Path(""), "quay.io/example/api:v1", "example/api:v1", digest.String(), func(c, t int64) { tracker.Update(item, c, t, "pushing") }); err != nil {
 		t.Fatalf("copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
 	}
 	tracker.End(item)
@@ -1120,5 +1117,63 @@ func TestCopyImageToRegistryReportsUploadedBytesUnderDestination(t *testing.T) {
 	}
 	if strings.Contains(got, " 0 B/") || strings.Contains(got, "/0 B") {
 		t.Fatalf("status = %q, want uploaded size", got)
+	}
+}
+
+func chartOnlyPushFixture(t *testing.T, manifest pushspec.PushManifest) (Engine, string) {
+	t.Helper()
+	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
+		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
+	})
+	engine := newPushTestEngine(probeClient)
+	engine.isInteractive = func(io.Reader, io.Writer) bool { return true }
+	engine.loadOCILayout = func(path string) (layout.Path, error) { return layout.Path(path), nil }
+	engine.copyImageToRegistry = func(context.Context, string, bool, layout.Path, string, string, string) error { return nil }
+	dir := t.TempDir()
+	manifest.LayoutDir = "oci-layout"
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "push_images.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "example-1.2.3.tgz"), chartArchiveFixture(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return engine, dir
+}
+
+func TestPushImagesChartOnlyRetargetKeepsImageSpecs(t *testing.T) {
+	images := []pushspec.ArchiveSpec{{Image: "busybox:1.36", Target: "library/busybox:1.36", OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+	engine, dir := chartOnlyPushFixture(t, pushspec.PushManifest{Images: images})
+	engine.selectItemsToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec, *chartBundle) (pushSelection, bool, error) {
+		return pushSelection{Chart: true, ChartTarget: "charts/app"}, true, nil
+	}
+	engine.pushChartArtifact = func(context.Context, string, bool, *chartBundle, io.Writer) error { return nil }
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1}); err != nil {
+		t.Fatalf("PushImages() error = %v", err)
+	}
+	got, err := pushspec.ReadPushManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Images, images) || got.ChartTarget != "charts/app" {
+		t.Fatalf("manifest = %+v", got)
+	}
+}
+
+func TestPushImagesAllUsesStoredChartTarget(t *testing.T) {
+	engine, dir := chartOnlyPushFixture(t, pushspec.PushManifest{ChartTarget: "team/charts/app"})
+	var got string
+	engine.pushChartArtifact = func(_ context.Context, _ string, _ bool, chart *chartBundle, _ io.Writer) error {
+		got = chart.targetPath()
+		return nil
+	}
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1, All: true}); err != nil {
+		t.Fatalf("PushImages() error = %v", err)
+	}
+	if got != "team/charts/app" {
+		t.Fatalf("chart targetPath = %q", got)
 	}
 }

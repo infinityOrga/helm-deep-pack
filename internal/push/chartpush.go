@@ -22,6 +22,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"gopkg.in/yaml.v3"
+
+	"helm-deep-pack/internal/progress"
 )
 
 const (
@@ -39,8 +41,8 @@ type chartBundle struct {
 	metadata map[string]any
 }
 
-// repo is the chart's repository path under the registry.
-func (b *chartBundle) repo() string {
+// targetPath is the chart's repository path under the registry.
+func (b *chartBundle) targetPath() string {
 	if b.target != "" {
 		return b.target
 	}
@@ -116,7 +118,7 @@ func pushChartArtifact(ctx context.Context, destination string, allowInsecureHTT
 	if status == nil {
 		status = io.Discard
 	}
-	ref := fmt.Sprintf("%s/%s:%s", strings.TrimRight(destination, "/"), bundle.repo(), bundle.tag)
+	ref := fmt.Sprintf("%s/%s:%s", strings.TrimRight(destination, "/"), bundle.targetPath(), bundle.tag)
 	refOptions := []name.Option{}
 	if allowInsecureHTTP {
 		refOptions = append(refOptions, name.Insecure)
@@ -129,7 +131,7 @@ func pushChartArtifact(ctx context.Context, destination string, allowInsecureHTT
 	if err != nil {
 		return fmt.Errorf("build chart artifact: %w", err)
 	}
-	if _, err := fmt.Fprintf(status, "uploading chart %s:%s to %s\n", bundle.name, bundle.version, parsedRef.Name()); err != nil {
+	if _, err := fmt.Fprintf(status, "uploading chart %s:%s (%s) to %s\n", bundle.name, bundle.version, progress.HumanizeBytes(int64(len(bundle.data))), parsedRef.Name()); err != nil {
 		return fmt.Errorf("write chart upload status: %w", err)
 	}
 	if err := remote.Write(parsedRef, artifact, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain)); err != nil {

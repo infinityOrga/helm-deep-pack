@@ -14,7 +14,7 @@ drifting to synonyms.
   layout, `push_images.json`, the chart archive, and a push helper. Self-contained
   unit handed to an operator (often across an air gap) to perform the push.
 - **Chart artifact** — A Helm chart published to a registry as an OCI artifact,
-  identified by the chart name and version.
+  identified by its target path (the chart name by default) and version.
 - **Push helper / staged push binary** — The executable placed inside a bundle so
   it can be run later to push images. Named `push_images` (`push_images.exe` on
   Windows).
@@ -25,12 +25,14 @@ drifting to synonyms.
   in GitHub releases and downloaded by `pull` for the selected destination
   platform before staging into the bundle.
 - **Push manifest** — `push_images.json`, the on-disk contract between phases
-  (`internal/pushspec`): the OCI layout dir name plus per-image source/target/digest.
+  (`internal/pushspec`): the OCI layout dir name plus per-image source/target/digest
+  and an optional `chartTarget`.
   An image may also carry an `optional` marker and best-effort `optionalFlags`
   Helm value paths; older manifests omit these fields and remain readable.
-- **Target path** — The image destination stored in `ArchiveSpec.Target`. It is
-  derived from the source image when staged and used by `push` as written,
-  unless an operator retargets it. Target paths are unique within a bundle.
+- **Target path** — The destination of an image (stored in `ArchiveSpec.Target`)
+  or of the chart. It is derived when staged and used by `push` as written,
+  unless an operator retargets it. Target paths are unique within a bundle,
+  including between the chart and images.
 - **Retarget** — An operator changes an image's target path (or the chart's
   repository path, saved as `chartTarget`) during the push phase. Only the
   repository path changes; the tag or digest is fixed. The change is saved in the

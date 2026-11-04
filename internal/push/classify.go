@@ -56,7 +56,7 @@ func classifyOne(ctx context.Context, registry string, allowInsecureHTTP bool, s
 func classifyChartWithHead(ctx context.Context, registry string, allowInsecureHTTP bool, bundle *chartBundle, headFn remoteHeadFn) classifiedChart {
 	return classifiedChart{
 		Bundle:           bundle,
-		classifiedTarget: classifyTarget(ctx, registry, bundle.repo()+":"+bundle.tag, allowInsecureHTTP, "", headFn),
+		classifiedTarget: classifyTarget(ctx, registry, bundle.targetPath()+":"+bundle.tag, allowInsecureHTTP, "", headFn),
 	}
 }
 

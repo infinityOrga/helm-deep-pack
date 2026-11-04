@@ -114,7 +114,7 @@ func (r Runner) Execute(ctx context.Context, opts Options, status ...io.Writer) 
 		return PullResult{}, err
 	}
 
-	if err := r.writePushManifest(outputDir, specs); err != nil {
+	if err := r.writePushManifest(outputDir, pushspec.PushManifest{Images: specs}); err != nil {
 		return PullResult{}, fmt.Errorf("write push manifest: %w", err)
 	}
 

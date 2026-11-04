@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -12,6 +14,8 @@ import (
 	"testing"
 
 	"context"
+
+	"helm-deep-pack/internal/progress"
 
 	"github.com/google/go-containerregistry/pkg/registry"
 
@@ -96,4 +100,18 @@ func chartArchiveFixture(t *testing.T) []byte {
 		t.Fatalf("gzip close error = %v", err)
 	}
 	return buf.Bytes()
+}
+
+func TestPushChartArtifactStatusShowsSize(t *testing.T) {
+	server := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	t.Cleanup(server.Close)
+	archive := chartArchiveFixture(t)
+	bundle := &chartBundle{name: "example", version: "1.2.3", tag: "1.2.3", data: archive, metadata: map[string]any{"name": "example", "version": "1.2.3"}}
+	var status bytes.Buffer
+	if err := pushChartArtifact(context.Background(), strings.TrimPrefix(server.URL, "http://"), true, bundle, &status); err != nil {
+		t.Fatal(err)
+	}
+	if want := "(" + progress.HumanizeBytes(int64(len(archive))) + ")"; !strings.Contains(status.String(), want) {
+		t.Fatalf("status = %q, want %q", status.String(), want)
+	}
 }

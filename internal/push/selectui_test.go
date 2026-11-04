@@ -532,7 +532,7 @@ func TestRunSelectRetargetsChart(t *testing.T) {
 	var out bytes.Buffer
 	var probed string
 	reclassifyChart := func(b *chartBundle) classifiedChart {
-		probed = b.repo()
+		probed = b.targetPath()
 		return classifiedChart{Bundle: b, classifiedTarget: classifiedTarget{Status: statusConflict}}
 	}
 	script := "e\x7f\x7f\x7f\x7fcharts/app\r\r"
@@ -561,5 +561,36 @@ func TestRunSelectChartEditEscAndInvalid(t *testing.T) {
 	sel, _, _ = runSelect(strings.NewReader("e:x\r\x1b\r"), &out, nil, chartFixture(), "", nil, re)
 	if sel.ChartTarget != "" || !strings.Contains(out.String(), "error:") {
 		t.Fatalf("sel = %+v, out = %q", sel, out.String())
+	}
+}
+
+func TestRunSelectRejectsChartEditCollidingWithImage(t *testing.T) {
+	var out bytes.Buffer
+	images := []classifiedImage{newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "x:1.2.3", Target: "charts/app:1.2.3"}, statusMirrored)}
+	reclassified := false
+	re := func(b *chartBundle) classifiedChart { reclassified = true; return classifiedChart{Bundle: b} }
+	sel, _, err := runSelect(strings.NewReader("e\x7f\x7f\x7f\x7fcharts/app\r"), &out, images, chartFixture(), "", nil, re)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "error: duplicate target charts/app:1.2.3") || reclassified || sel.ChartTarget != "" {
+		t.Fatalf("sel = %+v, reclassified = %v, out = %q", sel, reclassified, out.String())
+	}
+}
+
+func TestRunSelectRejectsImageEditCollidingWithChart(t *testing.T) {
+	var out bytes.Buffer
+	chart := &classifiedChart{Bundle: &chartBundle{name: "demo", version: "1.36", tag: "1.36"}}
+	reclassified := false
+	re := func(s pushspec.ArchiveSpec) classifiedImage {
+		reclassified = true
+		return newClassifiedImageForTest(s, statusNewRepository)
+	}
+	sel, _, err := runSelect(strings.NewReader("je"+strings.Repeat("\x7f", 20)+"demo\r"), &out, retargetFixture(), chart, "", re, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "error: duplicate target demo:1.36") || reclassified || sel.Retargeted != nil {
+		t.Fatalf("sel = %+v, reclassified = %v, out = %q", sel, reclassified, out.String())
 	}
 }

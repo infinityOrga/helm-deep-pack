@@ -8,7 +8,7 @@ import (
 )
 
 func TestGeneratePushManifest(t *testing.T) {
-	got, err := GeneratePushManifest([]ArchiveSpec{
+	got, err := GeneratePushManifest(PushManifest{LayoutDir: OCILayoutDirName(), Images: []ArchiveSpec{
 		{
 			Image:     "quay.io/example/api:v1",
 			Target:    "example/api:v1",
@@ -19,7 +19,7 @@ func TestGeneratePushManifest(t *testing.T) {
 			Target:    "library/busybox:1.36",
 			OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("GeneratePushManifest() error = %v", err)
 	}
@@ -61,20 +61,20 @@ func TestBuildSpecsSupportsDigestReferences(t *testing.T) {
 }
 
 func TestGeneratePushManifestRejectsMissingDigest(t *testing.T) {
-	_, err := GeneratePushManifest([]ArchiveSpec{{Image: "busybox:1.36", Target: "library/busybox:1.36"}})
+	_, err := GeneratePushManifest(PushManifest{Images: []ArchiveSpec{{Image: "busybox:1.36", Target: "library/busybox:1.36"}}})
 	if err == nil {
 		t.Fatal("GeneratePushManifest() error = nil, want error")
 	}
 }
 
 func TestGeneratePushManifestPersistsOptionalMetadata(t *testing.T) {
-	data, err := GeneratePushManifest([]ArchiveSpec{{
+	data, err := GeneratePushManifest(PushManifest{Images: []ArchiveSpec{{
 		Image:         "quay.io/example/metrics:v1",
 		Target:        "example/metrics:v1",
 		OCIDigest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Optional:      true,
 		OptionalFlags: []string{".Values.metrics.enabled"},
-	}})
+	}}})
 	if err != nil {
 		t.Fatalf("GeneratePushManifest() error = %v", err)
 	}
@@ -99,7 +99,7 @@ func TestWritePushManifestWritesManifestFile(t *testing.T) {
 		OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}}
 
-	if err := WritePushManifest(dir, specs); err != nil {
+	if err := WritePushManifest(dir, PushManifest{Images: specs}); err != nil {
 		t.Fatalf("WritePushManifest() error = %v", err)
 	}
 
@@ -112,6 +112,9 @@ func TestWritePushManifestWritesManifestFile(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("WritePushManifest() wrote invalid JSON: %v", err)
 	}
+	if manifest.LayoutDir != OCILayoutDirName() {
+		t.Fatalf("WritePushManifest() layoutDir = %q, want default", manifest.LayoutDir)
+	}
 	if len(manifest.Images) != 1 || manifest.Images[0].Image != "busybox:1.36" {
 		t.Fatalf("WritePushManifest() images = %#v", manifest.Images)
 	}
@@ -120,14 +123,14 @@ func TestWritePushManifestWritesManifestFile(t *testing.T) {
 func TestChartTargetRoundTripsAndOldManifestReadsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	specs := []ArchiveSpec{{Image: "a", Target: "a:1", OCIDigest: "sha256:x"}}
-	if err := WritePushManifestWithChart(dir, specs, "team/app"); err != nil {
+	if err := WritePushManifest(dir, PushManifest{Images: specs, ChartTarget: "team/app"}); err != nil {
 		t.Fatal(err)
 	}
 	m, err := ReadPushManifest(dir)
 	if err != nil || m.ChartTarget != "team/app" {
 		t.Fatalf("manifest = %+v, err = %v", m, err)
 	}
-	if err := WritePushManifest(dir, specs); err != nil {
+	if err := WritePushManifest(dir, PushManifest{Images: specs}); err != nil {
 		t.Fatal(err)
 	}
 	if m, _ = ReadPushManifest(dir); m.ChartTarget != "" {
