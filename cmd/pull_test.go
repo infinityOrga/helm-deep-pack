@@ -498,7 +498,7 @@ func TestPullCmd_WarnsForNonRecommendedDestination(t *testing.T) {
 	if !capture.called {
 		t.Fatal("expected workflow to be called")
 	}
-	if !strings.Contains(strings.ToLower(output.Stderr), "warning: destination platform is") {
+	if !strings.Contains(strings.ToLower(output.Stderr), "warning: push helper platform is") {
 		t.Fatalf("expected warning in stderr, got: %q", output.Stderr)
 	}
 	if !strings.Contains(output.Stderr, "--destination-platform windows/amd64") {
@@ -514,7 +514,7 @@ func TestPullCmd_NoWarningForRecommendedDestination(t *testing.T) {
 	if output.Err != nil {
 		t.Fatalf("unexpected error: %v", output.Err)
 	}
-	if strings.Contains(strings.ToLower(output.Stderr), "warning: destination platform is") {
+	if strings.Contains(strings.ToLower(output.Stderr), "warning: push helper platform is") {
 		t.Fatalf("did not expect warning for windows/amd64, got: %q", output.Stderr)
 	}
 }
@@ -527,7 +527,7 @@ func TestPullCmd_DefaultDestinationWarningDependsOnHostPlatform(t *testing.T) {
 	if output.Err != nil {
 		t.Fatalf("unexpected error: %v", output.Err)
 	}
-	hasWarning := strings.Contains(strings.ToLower(output.Stderr), "warning: destination platform is")
+	hasWarning := strings.Contains(strings.ToLower(output.Stderr), "warning: push helper platform is")
 	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
 		if hasWarning {
 			t.Fatalf("did not expect warning on windows/amd64 host, got: %q", output.Stderr)

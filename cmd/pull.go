@@ -164,7 +164,7 @@ func warnIfNonRecommendedDestination(cmd *cobra.Command, effectiveDestination st
 	}
 
 	currentPlatform := runtime.GOOS + "/" + runtime.GOARCH
-	if _, err := fmt.Fprintf(warnOut, "%swarning: destination platform is %q (host=%q), which diverges from the recommended %s target. To create a Windows x64 bundle, use --destination-platform windows/amd64.%s\n", yellow, effectiveDestination, currentPlatform, recommendedDestinationPlatform, reset); err != nil {
+	if _, err := fmt.Fprintf(warnOut, "%swarning: push helper platform is %q (host=%q); the recommended push platform is %s. This only affects the staged push_images helper; container images are always staged for linux/amd64. To push from Windows x64, use --destination-platform %s.%s\n", yellow, effectiveDestination, currentPlatform, recommendedDestinationPlatform, recommendedDestinationPlatform, reset); err != nil {
 		return fmt.Errorf("write destination platform warning: %w", err)
 	}
 	return nil
