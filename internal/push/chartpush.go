@@ -30,15 +30,18 @@ const (
 	maxChartMetadataBytes    = 1 << 20
 )
 
-// Keep chart uploads on the push helper's existing OCI stack instead of adding
-// the Helm registry client's extra dependencies.
-func pushChartFromBundle(ctx context.Context, destination string, allowInsecureHTTP bool, inputDir string, status io.Writer) error {
-	if status == nil {
-		status = io.Discard
-	}
+type chartBundle struct {
+	name     string
+	version  string
+	tag      string
+	data     []byte
+	metadata map[string]any
+}
+
+func readChartBundle(inputDir string) (*chartBundle, error) {
 	entries, err := os.ReadDir(inputDir)
 	if err != nil {
-		return fmt.Errorf("read bundle directory: %w", err)
+		return nil, fmt.Errorf("read bundle directory: %w", err)
 	}
 	var archives []string
 	for _, entry := range entries {
@@ -48,31 +51,63 @@ func pushChartFromBundle(ctx context.Context, destination string, allowInsecureH
 		archives = append(archives, filepath.Join(inputDir, entry.Name()))
 	}
 	if len(archives) == 0 {
-		if _, err := fmt.Fprintln(status, "warning: no chart archive found in bundle; continuing with images"); err != nil {
-			return fmt.Errorf("write missing-chart warning: %w", err)
-		}
-		return nil
+		return nil, nil
 	}
 	if len(archives) > 1 {
-		return fmt.Errorf("expected one chart archive in bundle, found %d", len(archives))
+		return nil, fmt.Errorf("expected one chart archive in bundle, found %d", len(archives))
 	}
 
 	data, err := os.ReadFile(archives[0])
 	if err != nil {
-		return fmt.Errorf("read chart archive: %w", err)
+		return nil, fmt.Errorf("read chart archive: %w", err)
 	}
 	metadata, err := chartArchiveMetadata(data)
 	if err != nil {
-		return fmt.Errorf("read chart metadata: %w", err)
+		return nil, fmt.Errorf("read chart metadata: %w", err)
 	}
 	nameValue, _ := metadata["name"].(string)
 	versionValue, _ := metadata["version"].(string)
 	if nameValue == "" || versionValue == "" {
-		return fmt.Errorf("chart archive metadata must include name and version")
+		return nil, fmt.Errorf("chart archive metadata must include name and version")
 	}
 
-	refTag := strings.ReplaceAll(versionValue, "+", "_")
-	ref := fmt.Sprintf("%s/%s:%s", strings.TrimRight(destination, "/"), nameValue, refTag)
+	return &chartBundle{
+		name:     nameValue,
+		version:  versionValue,
+		tag:      strings.ReplaceAll(versionValue, "+", "_"),
+		data:     data,
+		metadata: metadata,
+	}, nil
+}
+
+// Keep chart uploads on the push helper's existing OCI stack instead of adding
+// the Helm registry client's extra dependencies.
+func pushChartFromBundle(ctx context.Context, destination string, allowInsecureHTTP bool, inputDir string, status io.Writer) error {
+	bundle, err := readChartBundle(inputDir)
+	if err != nil {
+		return err
+	}
+	if bundle == nil {
+		return warnMissingChart(status)
+	}
+	return pushChartArtifact(ctx, destination, allowInsecureHTTP, bundle, status)
+}
+
+func warnMissingChart(status io.Writer) error {
+	if status == nil {
+		status = io.Discard
+	}
+	if _, err := fmt.Fprintln(status, "warning: no chart archive found in bundle; continuing with images"); err != nil {
+		return fmt.Errorf("write missing-chart warning: %w", err)
+	}
+	return nil
+}
+
+func pushChartArtifact(ctx context.Context, destination string, allowInsecureHTTP bool, bundle *chartBundle, status io.Writer) error {
+	if status == nil {
+		status = io.Discard
+	}
+	ref := fmt.Sprintf("%s/%s:%s", strings.TrimRight(destination, "/"), bundle.name, bundle.tag)
 	refOptions := []name.Option{}
 	if allowInsecureHTTP {
 		refOptions = append(refOptions, name.Insecure)
@@ -81,17 +116,17 @@ func pushChartFromBundle(ctx context.Context, destination string, allowInsecureH
 	if err != nil {
 		return fmt.Errorf("parse chart destination %q: %w", ref, err)
 	}
-	artifact, err := newHelmChartImage(data, metadata)
+	artifact, err := newHelmChartImage(bundle.data, bundle.metadata)
 	if err != nil {
 		return fmt.Errorf("build chart artifact: %w", err)
 	}
-	if _, err := fmt.Fprintf(status, "uploading chart %s:%s to %s\n", nameValue, versionValue, parsedRef.Name()); err != nil {
+	if _, err := fmt.Fprintf(status, "uploading chart %s:%s to %s\n", bundle.name, bundle.version, parsedRef.Name()); err != nil {
 		return fmt.Errorf("write chart upload status: %w", err)
 	}
 	if err := remote.Write(parsedRef, artifact, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain)); err != nil {
 		return fmt.Errorf("upload chart artifact: %w", err)
 	}
-	if _, err := fmt.Fprintf(status, "uploaded chart %s:%s\n", nameValue, versionValue); err != nil {
+	if _, err := fmt.Fprintf(status, "uploaded chart %s:%s\n", bundle.name, bundle.version); err != nil {
 		return fmt.Errorf("write chart completion status: %w", err)
 	}
 	return nil
@@ -122,7 +157,7 @@ func chartArchiveMetadata(data []byte) (map[string]any, error) {
 			return nil, fmt.Errorf("read Chart.yaml: %w", err)
 		}
 		if len(metadataBytes) > maxChartMetadataBytes {
-			return nil, fmt.Errorf("Chart.yaml exceeds %d bytes", maxChartMetadataBytes)
+			return nil, fmt.Errorf("chart.yaml exceeds %d bytes", maxChartMetadataBytes)
 		}
 		var metadata map[string]any
 		if err := yaml.Unmarshal(metadataBytes, &metadata); err != nil {

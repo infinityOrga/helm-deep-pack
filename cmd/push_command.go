@@ -21,7 +21,7 @@ func newPushState() pushcli.State {
 func newPushCommand(use string, state *pushcli.State) *cobra.Command {
 	return pushcli.NewCommand(pushcli.Config{
 		Use:   use,
-		Short: "Push mirrored images and optionally the bundled Helm chart",
+		Short: "Push staged images and the bundled Helm chart",
 		Run: func(ctx context.Context, opts push.Options, status ...io.Writer) error {
 			return pushRun(ctx, opts, status...)
 		},

@@ -8,7 +8,7 @@ func TestNewPushState_Defaults(t *testing.T) {
 	if state.Concurrency != defaultPushConcurrency {
 		t.Fatalf("expected default concurrency %d, got %d", defaultPushConcurrency, state.Concurrency)
 	}
-	if state.Registry != "" || state.InputDir != "" || state.All || state.IncludeChart || state.AllowHTTP || state.Verbose {
+	if state.Registry != "" || state.InputDir != "" || state.All || state.AllowHTTP || state.Verbose {
 		t.Fatalf("expected zero-value push state fields except concurrency, got %#v", state)
 	}
 }
@@ -17,7 +17,7 @@ func TestNewPushCommand_FlagContract(t *testing.T) {
 	state := newPushState()
 	cmd := newPushCommand("push_images [REGISTRY]", &state)
 
-	flags := []string{"input-dir", "concurrency", "all", "include-chart", "allow-insecure-http", "verbose"}
+	flags := []string{"input-dir", "concurrency", "all", "allow-insecure-http", "verbose"}
 	for _, flag := range flags {
 		AssertFlagExists(t, cmd, flag)
 	}
@@ -26,7 +26,6 @@ func TestNewPushCommand_FlagContract(t *testing.T) {
 		"input-dir":           "i",
 		"concurrency":         "c",
 		"all":                 "a",
-		"include-chart":       "",
 		"allow-insecure-http": "k",
 		"verbose":             "V",
 	}
@@ -38,7 +37,6 @@ func TestNewPushCommand_FlagContract(t *testing.T) {
 		"input-dir":           "",
 		"concurrency":         "4",
 		"all":                 "false",
-		"include-chart":       "false",
 		"allow-insecure-http": "false",
 		"verbose":             "false",
 	}

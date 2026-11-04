@@ -15,30 +15,51 @@ import (
 )
 
 type selectModel struct {
-	items    []classifiedImage
-	registry string
-	cursor   int
-	checked  []bool
-	top      int
-	height   int
+	images       []classifiedImage
+	chart        *classifiedChart
+	registry     string
+	cursor       int
+	checked      []bool
+	chartChecked bool
+	top          int
+	height       int
 }
 
-func newSelectModel(items []classifiedImage, height int, registry string) *selectModel {
+func newSelectModel(images []classifiedImage, chart *classifiedChart, height int, registry string) *selectModel {
+	count := len(images)
+	if chart != nil {
+		count++
+	}
 	if height < 1 {
-		if len(items) > 0 {
-			height = len(items)
+		if count > 0 {
+			height = count
 		} else {
 			height = 1
 		}
 	}
 	return &selectModel{
-		items:    items,
-		registry: strings.TrimRight(registry, "/"),
-		cursor:   0,
-		checked:  make([]bool, len(items)),
-		top:      0,
-		height:   height,
+		images:       images,
+		chart:        chart,
+		registry:     strings.TrimRight(registry, "/"),
+		checked:      make([]bool, len(images)),
+		chartChecked: chart != nil,
+		height:       height,
 	}
+}
+
+func (m *selectModel) itemCount() int {
+	count := len(m.images)
+	if m.chart != nil {
+		count++
+	}
+	return count
+}
+
+func (m *selectModel) imageIndex(item int) int {
+	if m.chart != nil {
+		return item - 1
+	}
+	return item
 }
 
 func (m *selectModel) moveUp() {
@@ -51,7 +72,7 @@ func (m *selectModel) moveUp() {
 }
 
 func (m *selectModel) moveDown() {
-	if m.cursor < len(m.items)-1 {
+	if m.cursor < m.itemCount()-1 {
 		m.cursor++
 	}
 	if m.cursor >= m.top+m.height {
@@ -60,13 +81,16 @@ func (m *selectModel) moveDown() {
 }
 
 func (m *selectModel) toggle() {
-	if len(m.items) > 0 {
-		m.checked[m.cursor] = !m.checked[m.cursor]
+	if m.chart != nil && m.cursor == 0 {
+		m.chartChecked = !m.chartChecked
+	} else if m.itemCount() > 0 {
+		imageIndex := m.imageIndex(m.cursor)
+		m.checked[imageIndex] = !m.checked[imageIndex]
 	}
 }
 
 func (m *selectModel) toggleAll() {
-	allChecked := true
+	allChecked := m.chart == nil || m.chartChecked
 	for _, c := range m.checked {
 		if !c {
 			allChecked = false
@@ -76,20 +100,30 @@ func (m *selectModel) toggleAll() {
 	for i := range m.checked {
 		m.checked[i] = !allChecked
 	}
+	if m.chart != nil {
+		m.chartChecked = !allChecked
+	}
 }
 
 func (m *selectModel) selectedSpecs() []pushspec.ArchiveSpec {
 	var result []pushspec.ArchiveSpec
 	for i, checked := range m.checked {
 		if checked {
-			result = append(result, m.items[i].Spec)
+			result = append(result, m.images[i].Spec)
 		}
 	}
 	return result
 }
 
+func (m *selectModel) selection() pushSelection {
+	return pushSelection{Images: m.selectedSpecs(), Chart: m.chartChecked}
+}
+
 func (m *selectModel) selectedCount() int {
 	count := 0
+	if m.chart != nil && m.chartChecked {
+		count++
+	}
 	for _, c := range m.checked {
 		if c {
 			count++
@@ -101,47 +135,87 @@ func (m *selectModel) selectedCount() int {
 func (m *selectModel) render() []string {
 	lines := make([]string, 0)
 
-	lines = append(lines, "Select images to push (↑/↓ move · space toggle · a all · enter confirm · esc cancel)")
+	lines = append(lines, "Select items to push (↑/↓ move · space toggle · a all · enter confirm · esc cancel)")
 
-	end := min(m.top+m.height, len(m.items))
-	for i := m.top; i < end; i++ {
+	end := min(m.top+m.height, m.itemCount())
+	if m.chart != nil && m.top == 0 && end > 0 {
+		lines = append(lines, "Helm chart")
 		prefix := "  "
-		if i == m.cursor {
+		if m.cursor == 0 {
 			prefix = "❯ "
 		}
 		checkbox := "◯ "
-		if m.checked[i] {
+		if m.chartChecked {
 			checkbox = "◉ "
 		}
-		target := m.items[i].Spec.Target
-		if m.registry != "" {
-			target = m.registry + "/" + target
-		}
-		body := progress.NormalizeDisplayImage(m.items[i].Spec.Image) + " → " + target
-		if m.items[i].Spec.Optional {
-			body += " [optional]"
-			if len(m.items[i].Spec.OptionalFlags) > 0 {
-				body += ": " + strings.Join(m.items[i].Spec.OptionalFlags, ", ")
-			}
-		}
-		status := ""
-		switch m.items[i].Status {
-		case statusPushable:
-			status = "  [missing]"
-		case statusMirrored:
-			status = "  [exists]"
-		case statusConflict:
-			status = "  [conflict]"
-		case statusUnknown:
-			status = "  [unknown]"
-		}
-		line := prefix + checkbox + body + status
-		lines = append(lines, line)
+		chart := m.chart.Bundle
+		label, _ := statusDisplay(m.chart.Status)
+		lines = append(lines, prefix+checkbox+chart.name+":"+chart.version+" → "+m.chartTarget(chart)+"  "+label)
 	}
 
-	lines = append(lines, fmt.Sprintf("%d/%d selected", m.selectedCount(), len(m.items)))
+	imageStart := m.top
+	if m.chart != nil && imageStart < 1 {
+		imageStart = 1
+	}
+	if imageStart < end {
+		lines = append(lines, "Images")
+		for i := imageStart; i < end; i++ {
+			imageIndex := m.imageIndex(i)
+			image := m.images[imageIndex]
+			prefix := "  "
+			if i == m.cursor {
+				prefix = "❯ "
+			}
+			checkbox := "◯ "
+			if m.checked[imageIndex] {
+				checkbox = "◉ "
+			}
+			target := image.Spec.Target
+			if m.registry != "" {
+				target = m.registry + "/" + target
+			}
+			body := progress.NormalizeDisplayImage(image.Spec.Image) + " → " + target
+			if image.Spec.Optional {
+				body += " [optional]"
+				if len(image.Spec.OptionalFlags) > 0 {
+					body += ": " + strings.Join(image.Spec.OptionalFlags, ", ")
+				}
+			}
+			label, _ := statusDisplay(image.Status)
+			lines = append(lines, prefix+checkbox+body+"  "+label)
+		}
+	}
+
+	lines = append(lines, fmt.Sprintf("%d/%d selected", m.selectedCount(), m.itemCount()))
 
 	return lines
+}
+
+func (m *selectModel) chartTarget(chart *chartBundle) string {
+	ref := chart.name + ":" + chart.tag
+	if m.registry != "" {
+		return m.registry + "/" + ref
+	}
+	return ref
+}
+
+func statusDisplay(status targetStatus) (label, color string) {
+	switch status {
+	case statusNewRepository:
+		return "[new repository]", termstyle.Yellow
+	case statusNewTag:
+		return "[new tag]", termstyle.Yellow
+	case statusMirrored:
+		return "[exists]", termstyle.Green
+	case statusTagExists:
+		return "[tag exists]", termstyle.Green
+	case statusConflict:
+		return "[conflict]", termstyle.Red
+	case statusUnknown:
+		return "[unknown]", termstyle.Magenta
+	default:
+		return "", ""
+	}
 }
 
 type key int
@@ -207,15 +281,15 @@ func readKey(r *bufio.Reader) (key, error) {
 	}
 }
 
-func viewportHeight(out io.Writer, count int) int {
+func viewportHeight(out io.Writer, count, sectionCount int) int {
 	if !terminal.IsWriter(out) {
 		return count
 	}
 	_, height := terminal.Size(out)
-	if height < 4 {
+	if height < 3+sectionCount {
 		return count
 	}
-	viewport := height - 3
+	viewport := height - 3 - sectionCount
 	if viewport < 1 {
 		viewport = 1
 	}
@@ -244,18 +318,35 @@ func colorizeRenderLines(lines []string, model *selectModel) []string {
 	styled := append([]string(nil), lines...)
 	styled[0] = termstyle.Bold + termstyle.Cyan + styled[0] + termstyle.Reset
 
-	end := min(model.top+model.height, len(model.items))
-	for itemIdx := model.top; itemIdx < end; itemIdx++ {
-		lineIdx := 1 + (itemIdx - model.top)
-		if lineIdx >= len(styled)-1 {
-			break
-		}
-
-		prefix := statusColor(model.items[itemIdx].Status)
-		if model.checked[itemIdx] {
+	end := min(model.top+model.height, model.itemCount())
+	lineIdx := 1
+	if model.chart != nil && model.top == 0 && end > 0 {
+		styled[lineIdx] = termstyle.Bold + termstyle.Cyan + styled[lineIdx] + termstyle.Reset
+		lineIdx++
+		_, prefix := statusDisplay(model.chart.Status)
+		if model.chartChecked {
 			prefix = termstyle.Bold + prefix
 		}
 		styled[lineIdx] = prefix + styled[lineIdx] + termstyle.Reset
+		lineIdx++
+	}
+
+	imageStart := model.top
+	if model.chart != nil && imageStart < 1 {
+		imageStart = 1
+	}
+	if imageStart < end {
+		styled[lineIdx] = termstyle.Bold + termstyle.Cyan + styled[lineIdx] + termstyle.Reset
+		lineIdx++
+		for item := imageStart; item < end && lineIdx < len(styled)-1; item++ {
+			imageIndex := model.imageIndex(item)
+			_, prefix := statusDisplay(model.images[imageIndex].Status)
+			if model.checked[imageIndex] {
+				prefix = termstyle.Bold + prefix
+			}
+			styled[lineIdx] = prefix + styled[lineIdx] + termstyle.Reset
+			lineIdx++
+		}
 	}
 
 	footerColor := termstyle.Dim
@@ -266,28 +357,22 @@ func colorizeRenderLines(lines []string, model *selectModel) []string {
 	return styled
 }
 
-func statusColor(status imageStatus) string {
-	switch status {
-	case statusPushable:
-		return termstyle.Yellow
-	case statusMirrored:
-		return termstyle.Green
-	case statusConflict:
-		return termstyle.Red
-	case statusUnknown:
-		return termstyle.Magenta
-	default:
-		return ""
+func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *classifiedChart, registry string) (selected pushSelection, cancelled bool, err error) {
+	itemCount := len(images)
+	sectionCount := 0
+	if chart != nil {
+		itemCount++
+		sectionCount++
 	}
-}
-
-func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry string) (selected []pushspec.ArchiveSpec, cancelled bool, err error) {
-	if len(items) == 0 {
-		return nil, false, nil
+	if len(images) > 0 {
+		sectionCount++
+	}
+	if itemCount == 0 {
+		return pushSelection{}, false, nil
 	}
 
-	height := viewportHeight(out, len(items))
-	model := newSelectModel(items, height, registry)
+	height := viewportHeight(out, itemCount, sectionCount)
+	model := newSelectModel(images, chart, height, registry)
 
 	var state *term.State
 	var inputFD int
@@ -297,7 +382,7 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 			inputFD = int(f.Fd())
 			st, makeRawErr := term.MakeRaw(inputFD)
 			if makeRawErr != nil {
-				return nil, false, fmt.Errorf("enable raw terminal mode: %w", makeRawErr)
+				return pushSelection{}, false, fmt.Errorf("enable raw terminal mode: %w", makeRawErr)
 			}
 			state = st
 			hasRawTerminal = true
@@ -324,17 +409,17 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 		}
 		if lastLines > 0 {
 			if err := terminal.ClearBlock(out, lastLines); err != nil {
-				return nil, false, fmt.Errorf("clear interactive output: %w", err)
+				return pushSelection{}, false, fmt.Errorf("clear interactive output: %w", err)
 			}
 		}
 		for i, line := range lines {
 			if i > 0 {
 				if _, err := io.WriteString(out, "\r\n"); err != nil {
-					return nil, false, fmt.Errorf("write interactive output: %w", err)
+					return pushSelection{}, false, fmt.Errorf("write interactive output: %w", err)
 				}
 			}
 			if _, err := io.WriteString(out, "\r"+line); err != nil {
-				return nil, false, fmt.Errorf("write interactive output: %w", err)
+				return pushSelection{}, false, fmt.Errorf("write interactive output: %w", err)
 			}
 		}
 		lastLines = len(lines)
@@ -343,11 +428,11 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 		if err != nil {
 			if err == io.EOF {
 				if _, err := io.WriteString(out, "\r\n"); err != nil {
-					return nil, false, fmt.Errorf("write interactive output: %w", err)
+					return pushSelection{}, false, fmt.Errorf("write interactive output: %w", err)
 				}
-				return nil, true, nil
+				return pushSelection{}, true, nil
 			}
-			return nil, false, err
+			return pushSelection{}, false, err
 		}
 
 		switch k {
@@ -360,16 +445,16 @@ func runSelect(in io.Reader, out io.Writer, items []classifiedImage, registry st
 		case keyToggleAll:
 			model.toggleAll()
 		case keyConfirm:
-			selected := model.selectedSpecs()
+			selected := model.selection()
 			if _, err := io.WriteString(out, "\r\n"); err != nil {
-				return nil, false, fmt.Errorf("write interactive output: %w", err)
+				return pushSelection{}, false, fmt.Errorf("write interactive output: %w", err)
 			}
 			return selected, false, nil
 		case keyCancel:
 			if _, err := io.WriteString(out, "\r\n"); err != nil {
-				return nil, false, fmt.Errorf("write interactive output: %w", err)
+				return pushSelection{}, false, fmt.Errorf("write interactive output: %w", err)
 			}
-			return nil, true, nil
+			return pushSelection{}, true, nil
 		}
 	}
 }

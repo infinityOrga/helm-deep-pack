@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
 
 func mustHash(t *testing.T, s string) v1.Hash {
@@ -20,44 +21,48 @@ func mustHash(t *testing.T, s string) v1.Hash {
 	return hash
 }
 
-func TestIsNotFoundError(t *testing.T) {
+func TestMissingTargetStatus(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want bool
+		name      string
+		err       error
+		want      targetStatus
+		wantKnown bool
 	}{
 		{
-			name: "404 in message",
-			err:  fmt.Errorf("some error with 404 in it"),
-			want: true,
+			name: "new repository",
+			err: &transport.Error{StatusCode: 404, Errors: []transport.Diagnostic{{
+				Code: transport.NameUnknownErrorCode,
+			}}},
+			want:      statusNewRepository,
+			wantKnown: true,
 		},
 		{
-			name: "not found in message",
-			err:  fmt.Errorf("manifest not found"),
-			want: true,
+			name: "new tag",
+			err: &transport.Error{StatusCode: 404, Errors: []transport.Diagnostic{{
+				Code: transport.ManifestUnknownErrorCode,
+			}}},
+			want:      statusNewTag,
+			wantKnown: true,
 		},
 		{
-			name: "manifest_unknown in message",
-			err:  fmt.Errorf("manifest_unknown: error"),
-			want: true,
+			name:      "ambiguous 404",
+			err:       &transport.Error{StatusCode: 404},
+			want:      statusUnknown,
+			wantKnown: false,
 		},
 		{
-			name: "connection refused error",
-			err:  fmt.Errorf("dial tcp: connection refused"),
-			want: false,
-		},
-		{
-			name: "generic error",
-			err:  fmt.Errorf("some other error"),
-			want: false,
+			name:      "connection refused",
+			err:       fmt.Errorf("dial tcp: connection refused"),
+			want:      statusUnknown,
+			wantKnown: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isNotFoundError(tt.err)
-			if got != tt.want {
-				t.Fatalf("isNotFoundError(%v) = %v, want %v", tt.err, got, tt.want)
+			got, known := missingTargetStatus(tt.err)
+			if got != tt.want || known != tt.wantKnown {
+				t.Fatalf("missingTargetStatus(%v) = (%v, %v), want (%v, %v)", tt.err, got, known, tt.want, tt.wantKnown)
 			}
 		})
 	}
@@ -132,11 +137,12 @@ func TestClassifyImagesConflict(t *testing.T) {
 	}
 }
 
-func TestClassifyImagesPushable(t *testing.T) {
+func TestClassifyImagesNewTag(t *testing.T) {
 	specDigest := "sha256:" + strings.Repeat("a", 64)
 	headFn := func(ref name.Reference, opts ...remote.Option) (*v1.Descriptor, error) {
-		// Return not found error
-		return nil, fmt.Errorf("manifest unknown: manifest_unknown")
+		return nil, &transport.Error{StatusCode: 404, Errors: []transport.Diagnostic{{
+			Code: transport.ManifestUnknownErrorCode,
+		}}}
 	}
 
 	specs := []pushspec.ArchiveSpec{
@@ -153,8 +159,8 @@ func TestClassifyImagesPushable(t *testing.T) {
 		t.Fatalf("classifyImages() returned %d images, want 1", len(result))
 	}
 
-	if result[0].Status != statusPushable {
-		t.Fatalf("Status = %v, want %v", result[0].Status, statusPushable)
+	if result[0].Status != statusNewTag {
+		t.Fatalf("Status = %v, want %v", result[0].Status, statusNewTag)
 	}
 
 	if result[0].RemoteDigest != "" {
@@ -163,6 +169,23 @@ func TestClassifyImagesPushable(t *testing.T) {
 
 	if result[0].ProbeErr != nil {
 		t.Fatalf("ProbeErr = %v, want nil", result[0].ProbeErr)
+	}
+}
+
+func TestClassifyChartUsesHelmOCINameAndVersionTag(t *testing.T) {
+	bundle := &chartBundle{name: "example", version: "1.2.3+build", tag: "1.2.3_build"}
+	var gotReference string
+	classified := classifyChartWithHead(context.Background(), "registry.example.com/team", false, bundle, func(ref name.Reference, _ ...remote.Option) (*v1.Descriptor, error) {
+		gotReference = ref.Name()
+		return nil, &transport.Error{StatusCode: 404, Errors: []transport.Diagnostic{{
+			Code: transport.ManifestUnknownErrorCode,
+		}}}
+	})
+	if gotReference != "registry.example.com/team/example:1.2.3_build" {
+		t.Fatalf("chart probe reference = %q", gotReference)
+	}
+	if classified.Status != statusNewTag {
+		t.Fatalf("chart status = %v, want %v", classified.Status, statusNewTag)
 	}
 }
 

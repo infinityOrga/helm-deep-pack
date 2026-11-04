@@ -1,7 +1,7 @@
-// Package push is the image transfer engine shared by both CLI phases. During
-// pull it stages remote images into a local OCI layout (ArchiveImages) and
-// copies the helper binary; during push it uploads that layout to a target
-// registry (PushImages). The on-disk manifest contract lives in pushspec.
+// Package push is the transfer engine shared by both CLI phases. During pull
+// it stages remote images into a local OCI layout and copies the helper binary;
+// during push it uploads selected images and the bundled Helm chart. The on-disk
+// image manifest contract lives in pushspec.
 package push
 
 import (
@@ -36,7 +36,6 @@ type Options struct {
 	InputDir          string
 	Concurrency       int
 	All               bool
-	IncludeChart      bool
 	AllowInsecureHTTP bool
 	In                io.Reader
 	Out               io.Writer
@@ -88,6 +87,15 @@ func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.
 	if err != nil {
 		return fmt.Errorf("read push manifest: %w", err)
 	}
+	chart, err := readChartBundle(resolvedInputDir)
+	if err != nil {
+		return fmt.Errorf("read chart bundle: %w", err)
+	}
+	if chart == nil {
+		if err := warnMissingChart(progress.StatusWriter(status...)); err != nil {
+			return err
+		}
+	}
 
 	var layoutPath layout.Path
 	if len(manifest.Images) > 0 {
@@ -101,75 +109,89 @@ func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.
 		}
 	}
 
-	var selected []pushspec.ArchiveSpec
-	if opts.All {
-		selected = manifest.Images
-	} else if len(manifest.Images) == 0 && opts.IncludeChart {
-		// Chart-only pushes have no image selection to perform.
-	} else {
-		if !e.isInteractive(opts.In, opts.Out) {
-			return fmt.Errorf("interactive selection requires terminal input and output; re-run with --all to push every image non-interactively")
+	selection := pushSelection{Images: manifest.Images, Chart: chart != nil}
+	if !opts.All {
+		if len(manifest.Images) == 0 && chart == nil {
+			return nil
 		}
-		chosen, proceed, selectErr := e.selectImagesToPush(ctx, opts, destRegistry, manifest.Images)
+		if !e.isInteractive(opts.In, opts.Out) {
+			return fmt.Errorf("interactive selection requires terminal input and output; re-run with --all to push all bundle items non-interactively")
+		}
+		chosen, proceed, selectErr := e.selectItemsToPush(ctx, opts, destRegistry, manifest.Images, chart)
 		if selectErr != nil {
 			return selectErr
 		}
 		if !proceed {
 			return nil
 		}
-		selected = chosen
+		selection = chosen
 	}
 
-	if err := e.pushSpecs(ctx, destRegistry, layoutPath, selected, opts.Concurrency, opts.AllowInsecureHTTP, status...); err != nil {
+	if err := e.pushSpecs(ctx, destRegistry, layoutPath, selection.Images, opts.Concurrency, opts.AllowInsecureHTTP, status...); err != nil {
 		return err
 	}
-	if opts.IncludeChart {
-		if err := e.pushChartFromBundle(ctx, destRegistry, opts.AllowInsecureHTTP, resolvedInputDir, progress.StatusWriter(status...)); err != nil {
+	if selection.Chart {
+		if err := e.pushChartArtifact(ctx, destRegistry, opts.AllowInsecureHTTP, chart, progress.StatusWriter(status...)); err != nil {
 			return fmt.Errorf("push chart: %w", err)
 		}
 	}
 	return nil
 }
 
-// selectImagesToPush runs the interactive chooser and conflict confirmation.
+type pushSelection struct {
+	Images []pushspec.ArchiveSpec
+	Chart  bool
+}
+
+// selectItemsToPush runs the interactive chooser and image conflict confirmation.
 // proceed=false means stop without pushing.
-func selectImagesToPush(ctx context.Context, opts Options, destRegistry string, specs []pushspec.ArchiveSpec) (selected []pushspec.ArchiveSpec, proceed bool, err error) {
+func selectItemsToPush(ctx context.Context, opts Options, destRegistry string, specs []pushspec.ArchiveSpec, chart *chartBundle) (selected pushSelection, proceed bool, err error) {
 	classified := classifyImages(ctx, destRegistry, opts.AllowInsecureHTTP, specs)
+	var classifiedChartItem *classifiedChart
+	if chart != nil {
+		item := classifyChartWithHead(ctx, destRegistry, opts.AllowInsecureHTTP, chart, remote.Head)
+		classifiedChartItem = &item
+		if item.Status == statusUnknown {
+			if _, err := fmt.Fprintf(opts.Out, "warning: could not check Helm chart %s:%s in registry: %v\n", chart.name, chart.version, item.ProbeErr); err != nil {
+				return pushSelection{}, false, fmt.Errorf("write warning output: %w", err)
+			}
+		}
+	}
 
 	for _, item := range classified {
 		if item.Status == statusUnknown {
 			if _, err := fmt.Fprintf(opts.Out, "warning: could not check %s in registry: %v\n", item.Spec.Image, item.ProbeErr); err != nil {
-				return nil, false, fmt.Errorf("write warning output: %w", err)
+				return pushSelection{}, false, fmt.Errorf("write warning output: %w", err)
 			}
 		}
 	}
 
-	selected, cancelled, err := runSelect(opts.In, opts.Out, classified, destRegistry)
+	selected, cancelled, err := runSelect(opts.In, opts.Out, classified, classifiedChartItem, destRegistry)
 	if err != nil {
-		return nil, false, fmt.Errorf("select images: %w", err)
+		return pushSelection{}, false, fmt.Errorf("select push items: %w", err)
 	}
 	if cancelled {
-		return nil, false, nil
+		return pushSelection{}, false, nil
 	}
 
-	if len(selected) == 0 {
-		if _, err := fmt.Fprintln(opts.Out, "nothing selected; no images pushed"); err != nil {
-			return nil, false, fmt.Errorf("write empty-selection output: %w", err)
+	if len(selected.Images) == 0 && !selected.Chart {
+		if _, err := fmt.Fprintln(opts.Out, "nothing selected; no items pushed"); err != nil {
+			return pushSelection{}, false, fmt.Errorf("write empty-selection output: %w", err)
 		}
-		return nil, true, nil
+		return selected, true, nil
 	}
 
-	conflicts := selectedConflicts(selected, classified)
+	conflicts := selectedConflicts(selected.Images, classified)
 	if len(conflicts) > 0 {
 		confirmed, confirmErr := confirmConflictSelection(opts.In, opts.Out, conflicts)
 		if confirmErr != nil {
-			return nil, false, fmt.Errorf("confirm conflict selection: %w", confirmErr)
+			return pushSelection{}, false, fmt.Errorf("confirm conflict selection: %w", confirmErr)
 		}
 		if !confirmed {
-			if _, err := fmt.Fprintln(opts.Out, "push cancelled; no images pushed"); err != nil {
-				return nil, false, fmt.Errorf("write cancellation output: %w", err)
+			if _, err := fmt.Fprintln(opts.Out, "push cancelled; no items pushed"); err != nil {
+				return pushSelection{}, false, fmt.Errorf("write cancellation output: %w", err)
 			}
-			return nil, false, nil
+			return pushSelection{}, false, nil
 		}
 	}
 

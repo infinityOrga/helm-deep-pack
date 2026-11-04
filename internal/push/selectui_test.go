@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-func newClassifiedImageForTest(spec pushspec.ArchiveSpec, status imageStatus) classifiedImage {
+func newClassifiedImageForTest(spec pushspec.ArchiveSpec, status targetStatus) classifiedImage {
 	return classifiedImage{
-		Spec:   spec,
-		Status: status,
+		Spec:             spec,
+		classifiedTarget: classifiedTarget{Status: status},
 	}
 }
 
@@ -19,7 +19,7 @@ func TestSelectModelToggleAndSelectedSpecs(t *testing.T) {
 	items := []classifiedImage{
 		newClassifiedImageForTest(
 			pushspec.ArchiveSpec{Image: "busybox:1.36", Target: "library/busybox:1.36"},
-			statusPushable,
+			statusNewRepository,
 		),
 		newClassifiedImageForTest(
 			pushspec.ArchiveSpec{Image: "alpine:3.18", Target: "library/alpine:3.18"},
@@ -27,11 +27,11 @@ func TestSelectModelToggleAndSelectedSpecs(t *testing.T) {
 		),
 		newClassifiedImageForTest(
 			pushspec.ArchiveSpec{Image: "nginx:latest", Target: "library/nginx:latest"},
-			statusPushable,
+			statusNewTag,
 		),
 	}
 
-	model := newSelectModel(items, 10, "")
+	model := newSelectModel(items, nil, 10, "")
 
 	// Initially no items selected
 	if got := model.selectedCount(); got != 0 {
@@ -69,14 +69,14 @@ func TestSelectModelToggleAndSelectedSpecs(t *testing.T) {
 
 func TestSelectModelMoveClampsAndScrolls(t *testing.T) {
 	items := []classifiedImage{
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image1", Target: "target1"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image2", Target: "target2"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image3", Target: "target3"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image4", Target: "target4"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image5", Target: "target5"}, statusPushable),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image1", Target: "target1"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image2", Target: "target2"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image3", Target: "target3"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image4", Target: "target4"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image5", Target: "target5"}, statusNewRepository),
 	}
 
-	model := newSelectModel(items, 2, "")
+	model := newSelectModel(items, nil, 2, "")
 
 	// moveUp at top keeps cursor at 0
 	model.moveUp()
@@ -114,12 +114,12 @@ func TestSelectModelMoveClampsAndScrolls(t *testing.T) {
 
 func TestSelectModelToggleAll(t *testing.T) {
 	items := []classifiedImage{
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image1", Target: "target1"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image2", Target: "target2"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image3", Target: "target3"}, statusPushable),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image1", Target: "target1"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image2", Target: "target2"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image3", Target: "target3"}, statusNewRepository),
 	}
 
-	model := newSelectModel(items, 10, "")
+	model := newSelectModel(items, nil, 10, "")
 
 	// toggleAll when nothing checked -> all checked
 	model.toggleAll()
@@ -149,7 +149,7 @@ func TestSelectModelRender(t *testing.T) {
 	items := []classifiedImage{
 		newClassifiedImageForTest(
 			pushspec.ArchiveSpec{Image: "busybox:1.36", Target: "library/busybox:1.36"},
-			statusPushable,
+			statusNewRepository,
 		),
 		newClassifiedImageForTest(
 			pushspec.ArchiveSpec{Image: "nginx:latest", Target: "library/nginx:latest"},
@@ -157,22 +157,25 @@ func TestSelectModelRender(t *testing.T) {
 		),
 	}
 
-	model := newSelectModel(items, 10, "registry.local:5000/")
+	model := newSelectModel(items, nil, 10, "registry.local:5000/")
 
 	lines := model.render()
 
-	// Should have header, 2 items, footer
-	if len(lines) != 4 {
-		t.Fatalf("render() returned %d lines, want 4", len(lines))
+	// Should have header, section title, 2 items, footer
+	if len(lines) != 5 {
+		t.Fatalf("render() returned %d lines, want 5", len(lines))
 	}
 
 	// First line should be header
-	if !strings.Contains(lines[0], "Select images to push") {
+	if !strings.Contains(lines[0], "Select items to push") {
 		t.Fatalf("header line = %q", lines[0])
+	}
+	if lines[1] != "Images" {
+		t.Fatalf("section title = %q, want Images", lines[1])
 	}
 
 	// Check item line contains cursor, checkbox, body, status
-	itemLine := lines[1]
+	itemLine := lines[2]
 	if !strings.Contains(itemLine, "❯ ") {
 		t.Fatalf("item line missing cursor: %q", itemLine)
 	}
@@ -185,12 +188,12 @@ func TestSelectModelRender(t *testing.T) {
 	if !strings.Contains(itemLine, "registry.local:5000/library/busybox:1.36") {
 		t.Fatalf("item line missing registry-qualified target: %q", itemLine)
 	}
-	if !strings.Contains(itemLine, "[missing]") {
+	if !strings.Contains(itemLine, "[new repository]") {
 		t.Fatalf("item line missing status: %q", itemLine)
 	}
 
 	// Last line should be footer with count
-	footer := lines[3]
+	footer := lines[4]
 	if footer != "0/2 selected" {
 		t.Fatalf("footer = %q, want \"0/2 selected\"", footer)
 	}
@@ -198,16 +201,53 @@ func TestSelectModelRender(t *testing.T) {
 	// Toggle first item
 	model.toggle()
 	lines = model.render()
-	itemLine = lines[1]
+	itemLine = lines[2]
 
 	// Now should have checked checkbox and updated footer
 	if !strings.Contains(itemLine, "◉ ") {
 		t.Fatalf("after toggle: item line missing checked checkbox: %q", itemLine)
 	}
 
-	footer = lines[3]
+	footer = lines[4]
 	if footer != "1/2 selected" {
 		t.Fatalf("after toggle: footer = %q, want \"1/2 selected\"", footer)
+	}
+}
+
+func TestSelectModelShowsPreselectedChartBeforeImages(t *testing.T) {
+	chart := &classifiedChart{
+		Bundle:           &chartBundle{name: "demo", version: "1.2.3", tag: "1.2.3"},
+		classifiedTarget: classifiedTarget{Status: statusNewRepository},
+	}
+	model := newSelectModel([]classifiedImage{
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "nginx:1.27", Target: "library/nginx:1.27"}, statusNewTag),
+	}, chart, 10, "registry.example.com/team")
+
+	lines := model.render()
+	if lines[1] != "Helm chart" || lines[3] != "Images" {
+		t.Fatalf("section titles = %q and %q, want Helm chart then Images", lines[1], lines[3])
+	}
+	if !strings.Contains(lines[2], "❯ ◉ demo:1.2.3") || !strings.Contains(lines[2], "[new repository]") {
+		t.Fatalf("chart row = %q, want first, selected Helm chart with repository status", lines[2])
+	}
+	if !strings.Contains(lines[4], "[new tag]") {
+		t.Fatalf("image row = %q, want new-tag status", lines[4])
+	}
+	if lines[5] != "1/2 selected" {
+		t.Fatalf("selection summary = %q, want 1/2 selected", lines[5])
+	}
+
+	selected := model.selection()
+	if !selected.Chart || len(selected.Images) != 0 {
+		t.Fatalf("initial selection = %#v, want only the chart", selected)
+	}
+	model.toggleAll()
+	if got := model.selectedCount(); got != 2 {
+		t.Fatalf("toggleAll() selectedCount() = %d, want 2 including chart", got)
+	}
+	model.toggleAll()
+	if got := model.selectedCount(); got != 0 {
+		t.Fatalf("second toggleAll() selectedCount() = %d, want 0", got)
 	}
 }
 
@@ -218,18 +258,18 @@ func TestSelectModelRenderMarksOptionalImagesAndLeavesThemUnchecked(t *testing.T
 			Target:        "example/metrics:v1",
 			Optional:      true,
 			OptionalFlags: []string{".Values.metrics.enabled"},
-		}, statusPushable),
-	}, 10, "")
+		}, statusNewTag),
+	}, nil, 10, "")
 
 	lines := model.render()
 	if model.selectedCount() != 0 {
 		t.Fatalf("optional image was selected by default: %v", model.selectedSpecs())
 	}
-	if !strings.Contains(lines[1], "[optional]") || !strings.Contains(lines[1], ".Values.metrics.enabled") {
-		t.Fatalf("optional row = %q, want optional marker and flag path", lines[1])
+	if !strings.Contains(lines[2], "[optional]") || !strings.Contains(lines[2], ".Values.metrics.enabled") {
+		t.Fatalf("optional row = %q, want optional marker and flag path", lines[2])
 	}
-	if !strings.Contains(lines[1], "◯ ") {
-		t.Fatalf("optional row = %q, want unchecked row", lines[1])
+	if !strings.Contains(lines[2], "◯ ") {
+		t.Fatalf("optional row = %q, want unchecked row", lines[2])
 	}
 
 	model.toggleAll()
@@ -304,15 +344,15 @@ func TestReadKeyEOF(t *testing.T) {
 
 func TestSelectModelRenderScrolling(t *testing.T) {
 	items := []classifiedImage{
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image1", Target: "target1"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image2", Target: "target2"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image3", Target: "target3"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image4", Target: "target4"}, statusPushable),
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image5", Target: "target5"}, statusPushable),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image1", Target: "target1"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image2", Target: "target2"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image3", Target: "target3"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image4", Target: "target4"}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "image5", Target: "target5"}, statusNewRepository),
 	}
 
 	// Height 2 means only 2 items visible plus header and footer
-	model := newSelectModel(items, 2, "")
+	model := newSelectModel(items, nil, 2, "")
 
 	// Move to last item
 	for i := 0; i < 4; i++ {
@@ -321,9 +361,9 @@ func TestSelectModelRenderScrolling(t *testing.T) {
 
 	lines := model.render()
 
-	// Should have header, 2 visible items, footer = 4 lines
-	if len(lines) != 4 {
-		t.Fatalf("render() returned %d lines, want 4", len(lines))
+	// Should have header, section title, 2 visible items, footer = 5 lines
+	if len(lines) != 5 {
+		t.Fatalf("render() returned %d lines, want 5", len(lines))
 	}
 
 	// Should not contain image1 or image2
@@ -363,9 +403,9 @@ func TestFitRenderLines(t *testing.T) {
 
 func TestColorizeRenderLines(t *testing.T) {
 	model := newSelectModel([]classifiedImage{
-		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "a", Target: "a"}, statusPushable),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "a", Target: "a"}, statusNewRepository),
 		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "b", Target: "b"}, statusConflict),
-	}, 10, "")
+	}, nil, 10, "")
 	model.checked[0] = true
 
 	lines := model.render()
@@ -374,11 +414,11 @@ func TestColorizeRenderLines(t *testing.T) {
 	if !strings.Contains(styled[0], termstyle.Cyan) {
 		t.Fatalf("header not colorized: %q", styled[0])
 	}
-	if !strings.Contains(styled[1], termstyle.Yellow) || !strings.Contains(styled[1], termstyle.Bold) {
-		t.Fatalf("selected missing row style mismatch: %q", styled[1])
+	if !strings.Contains(styled[2], termstyle.Yellow) || !strings.Contains(styled[2], termstyle.Bold) {
+		t.Fatalf("selected missing row style mismatch: %q", styled[2])
 	}
-	if !strings.Contains(styled[2], termstyle.Red) {
-		t.Fatalf("conflict row style mismatch: %q", styled[2])
+	if !strings.Contains(styled[3], termstyle.Red) {
+		t.Fatalf("conflict row style mismatch: %q", styled[3])
 	}
 	if !strings.Contains(styled[len(styled)-1], termstyle.Bold) {
 		t.Fatalf("footer style mismatch: %q", styled[len(styled)-1])

@@ -147,7 +147,7 @@ func TestOCIRegistryE2E(t *testing.T) {
 			manifest := checkE2EArtifacts(t, outputDir, e2eSmallChartMinImages)
 
 			pushBinary := filepath.Join(outputDir, push.PushBinaryName())
-			pushCmd := exec.Command(pushBinary, e2eRegistryHost, "--all", "--include-chart", "--allow-insecure-http")
+			pushCmd := exec.Command(pushBinary, e2eRegistryHost, "--all", "--allow-insecure-http")
 			pushCmd.Env = os.Environ()
 			pushOutput, err := pushCmd.CombinedOutput()
 			if err != nil {

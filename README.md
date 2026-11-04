@@ -178,7 +178,7 @@ Useful flags:
 --verbose           Show additional diagnostic logging
 ```
 
-## Push images
+## Push images and Helm chart
 
 The preferred portable workflow is to run the helper inside the bundle:
 
@@ -195,11 +195,14 @@ helm-deep-pack push registry.example.com/team --input-dir ./my-app-bundle --all
 ```
 
 The registry may include a namespace path, for example
-`registry.example.com/team/platform`. That path prefixes every image destination.
-Add `--include-chart` to also publish the bundled Helm chart as an OCI artifact
+`registry.example.com/team/platform`. That path prefixes every image destination
+and the Helm chart repository. The bundled chart is published as an OCI artifact
 at `registry.example.com/team/platform/CHART_NAME:CHART_VERSION`.
 
-In a terminal, omit `--all` to review the staged images and select what to push.
+In a terminal, omit `--all` to review the chart and staged images and select what
+to push. The Helm chart appears first and is selected by default; images follow
+under their own heading. Status labels distinguish a new repository from a new
+tag when the registry provides that information.
 For CI or other non-interactive environments, provide the registry explicitly
 and use `--all`. You can also omit the registry in an interactive terminal and
 enter it when prompted.
@@ -209,21 +212,19 @@ enter it when prompted.
 | Flag | Use it to |
 | --- | --- |
 | `-i, --input-dir DIR` | Point to a bundle when you are not running inside it. |
-| `-a, --all` | Push every staged image without an interactive selection. |
-| `--include-chart` | Also publish the bundled chart as a Helm-compatible OCI artifact. |
+| `-a, --all` | Push every staged image and the bundled chart without interactive selection. |
 | `-c, --concurrency N` | Push more images in parallel; the default is `4`. |
 | `-V, --verbose` | Show additional diagnostic logging. |
 | `-k, --allow-insecure-http` | Use an intentionally plain-HTTP registry, such as a local test registry. |
 
-Registry connections use HTTPS by default. Authenticate before pushing images
-with the credential tool used by your registry, for example:
+Registry connections use HTTPS by default. Authenticate before pushing images and
+the chart with the credential tool used by your registry, for example:
 
 ```bash
 docker login registry.example.com
 ```
 
-Use the same registry credentials for chart publication; `push --include-chart`
-uses the push workflow's registry authentication.
+The chart uses the same registry credentials as the image push.
 
 Do not use `--allow-insecure-http` for a production registry.
 

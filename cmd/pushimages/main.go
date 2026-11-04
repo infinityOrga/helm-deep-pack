@@ -23,7 +23,7 @@ func logger(verbose bool) *slog.Logger {
 func main() {
 	cmd := pushcli.NewCommand(pushcli.Config{
 		Use:           "push_images [REGISTRY]",
-		Short:         "Push mirrored images from generated OCI layout artifacts",
+		Short:         "Push staged images and the bundled Helm chart",
 		Version:       version,
 		VersionFormat: "push_images {{.Version}}\n",
 		Run: func(ctx context.Context, opts push.Options, status ...io.Writer) error {

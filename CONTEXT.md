@@ -7,8 +7,9 @@ drifting to synonyms.
 
 - **Pull phase** — Renders a Helm chart, extracts referenced container images, and
   stages them into an output bundle. Implemented in `internal/pull`.
-- **Push phase** — Transfers staged images and, when requested, the bundled chart
-  artifact to a target registry. Implemented in `internal/push`.
+- **Push phase** — Transfers selected staged images and optionally the bundled
+  chart artifact to a target registry. The chart is listed first and selected by
+  default; `--all` includes it. Implemented in `internal/push`.
 - **Output bundle** (or **bundle**) — The directory produced by a pull: the OCI
   layout, `push_images.json`, the chart archive, and a push helper. Self-contained
   unit handed to an operator (often across an air gap) to perform the push.
@@ -27,6 +28,8 @@ drifting to synonyms.
   (`internal/pushspec`): the OCI layout dir name plus per-image source/target/digest.
   An image may also carry an `optional` marker and best-effort `optionalFlags`
   Helm value paths; older manifests omit these fields and remain readable.
+- **Target path** — The image destination stored in `ArchiveSpec.Target`. It is
+  derived from the source image when staged and used by `push` as written.
 - **Optional image** — An image absent from the normal render, including an
   annotation-only image or an image found only by the synthetic inventory render.
   Required status wins when the same image appears in both inventories.

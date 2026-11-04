@@ -194,7 +194,7 @@ func TestPushImagesUsesRegistryNamespacePathAsDestinationPrefix(t *testing.T) {
 	}
 }
 
-func TestPushImagesPublishesChartEvenWhenNoImagesSelected(t *testing.T) {
+func TestPushImagesAllPublishesChartWhenBundleHasNoImages(t *testing.T) {
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
 	})
@@ -205,28 +205,65 @@ func TestPushImagesPublishesChartEvenWhenNoImagesSelected(t *testing.T) {
 		return layout.Path(path), nil
 	}
 	engine.isInteractive = func(io.Reader, io.Writer) bool { return false }
-	engine.selectImagesToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec) ([]pushspec.ArchiveSpec, bool, error) {
-		t.Fatal("image selection should be skipped when no images are staged")
-		return nil, false, nil
+	engine.selectItemsToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec, *chartBundle) (pushSelection, bool, error) {
+		t.Fatal("interactive selection should be skipped with --all")
+		return pushSelection{}, false, nil
 	}
 	inputDir := t.TempDir()
 	var chartPushed bool
-	engine.pushChartFromBundle = func(_ context.Context, registry string, _ bool, dir string, _ io.Writer) error {
-		chartPushed = registry == "registry.local:5000/team" && dir == inputDir
+	engine.pushChartArtifact = func(_ context.Context, registry string, _ bool, chart *chartBundle, _ io.Writer) error {
+		chartPushed = registry == "registry.local:5000/team" && chart.name == "example" && chart.version == "1.2.3"
 		return nil
 	}
 	writePushManifestFixture(t, inputDir, nil)
+	if err := os.WriteFile(filepath.Join(inputDir, "example-1.2.3.tgz"), chartArchiveFixture(t), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 
 	if err := pushImagesWithEngineForTest(t, engine, Options{
-		Registry: "registry.local:5000/team", InputDir: inputDir, Concurrency: 4, IncludeChart: true,
+		Registry: "registry.local:5000/team", InputDir: inputDir, Concurrency: 4, All: true,
 	}); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
 	}
 	if !chartPushed {
-		t.Fatal("expected chart to be published after an empty image selection")
+		t.Fatal("expected chart to be published by --all")
 	}
 	if loadedLayout {
 		t.Fatal("did not expect an image layout load when the bundle has no images")
+	}
+}
+
+func TestPushImagesPublishesChartSelectedFromInteractiveList(t *testing.T) {
+	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
+		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
+	})
+	engine := newPushTestEngine(probeClient)
+	engine.isInteractive = func(io.Reader, io.Writer) bool { return true }
+	inputDir := t.TempDir()
+	writePushManifestFixture(t, inputDir, nil)
+	if err := os.WriteFile(filepath.Join(inputDir, "example-1.2.3.tgz"), chartArchiveFixture(t), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	engine.selectItemsToPush = func(_ context.Context, _ Options, _ string, specs []pushspec.ArchiveSpec, chart *chartBundle) (pushSelection, bool, error) {
+		if len(specs) != 0 || chart == nil || chart.name != "example" {
+			t.Fatalf("selection inputs = %d images, chart %#v; want chart-only bundle", len(specs), chart)
+		}
+		return pushSelection{Chart: true}, true, nil
+	}
+	var chartPushed bool
+	engine.pushChartArtifact = func(_ context.Context, _ string, _ bool, _ *chartBundle, _ io.Writer) error {
+		chartPushed = true
+		return nil
+	}
+
+	if err := pushImagesWithEngineForTest(t, engine, Options{
+		Registry: "registry.local:5000/team", InputDir: inputDir, Concurrency: 4,
+		In: strings.NewReader("\r"), Out: &bytes.Buffer{},
+	}); err != nil {
+		t.Fatalf("PushImages() error = %v", err)
+	}
+	if !chartPushed {
+		t.Fatal("expected selected chart to be published")
 	}
 }
 
@@ -530,9 +567,9 @@ func TestEngineUsesTerminalSeamForImageSelection(t *testing.T) {
 	engine := newPushTestEngine(probeClient)
 	engine.isInteractive = func(io.Reader, io.Writer) bool { return false }
 	selectionCalled := false
-	engine.selectImagesToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec) ([]pushspec.ArchiveSpec, bool, error) {
+	engine.selectItemsToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec, *chartBundle) (pushSelection, bool, error) {
 		selectionCalled = true
-		return nil, false, nil
+		return pushSelection{}, false, nil
 	}
 	engine.loadOCILayout = func(path string) (layout.Path, error) {
 		return layout.Path(path), nil
@@ -878,9 +915,9 @@ func TestSelectedConflicts(t *testing.T) {
 		{Image: "b:v1", Target: "b:v1", OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 	}
 	classified := []classifiedImage{
-		{Spec: selected[0], Status: statusConflict, RemoteDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-		{Spec: selected[1], Status: statusMirrored},
-		{Spec: pushspec.ArchiveSpec{Image: "c:v1", Target: "c:v1", OCIDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}, Status: statusConflict},
+		{Spec: selected[0], classifiedTarget: classifiedTarget{Status: statusConflict, RemoteDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}},
+		{Spec: selected[1], classifiedTarget: classifiedTarget{Status: statusMirrored}},
+		{Spec: pushspec.ArchiveSpec{Image: "c:v1", Target: "c:v1", OCIDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}, classifiedTarget: classifiedTarget{Status: statusConflict}},
 	}
 
 	got := selectedConflicts(selected, classified)
@@ -897,9 +934,8 @@ func TestConfirmConflictSelection(t *testing.T) {
 		out := new(bytes.Buffer)
 		confirmed, err := confirmConflictSelection(strings.NewReader("yes\n"), out, []classifiedImage{
 			{
-				Spec:         pushspec.ArchiveSpec{Target: "a:v1", OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-				Status:       statusConflict,
-				RemoteDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				Spec:             pushspec.ArchiveSpec{Target: "a:v1", OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+				classifiedTarget: classifiedTarget{Status: statusConflict, RemoteDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 			},
 		})
 		if err != nil {
@@ -919,7 +955,7 @@ func TestConfirmConflictSelection(t *testing.T) {
 	t.Run("no", func(t *testing.T) {
 		out := new(bytes.Buffer)
 		confirmed, err := confirmConflictSelection(strings.NewReader("no\n"), out, []classifiedImage{
-			{Spec: pushspec.ArchiveSpec{Target: "a:v1", OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, Status: statusConflict, RemoteDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+			{Spec: pushspec.ArchiveSpec{Target: "a:v1", OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, classifiedTarget: classifiedTarget{Status: statusConflict, RemoteDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
 		})
 		if err != nil {
 			t.Fatalf("confirmConflictSelection() error = %v", err)
@@ -932,7 +968,7 @@ func TestConfirmConflictSelection(t *testing.T) {
 	t.Run("invalid then yes", func(t *testing.T) {
 		out := new(bytes.Buffer)
 		confirmed, err := confirmConflictSelection(strings.NewReader("maybe\ny\n"), out, []classifiedImage{
-			{Spec: pushspec.ArchiveSpec{Target: "a:v1", OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, Status: statusConflict, RemoteDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+			{Spec: pushspec.ArchiveSpec{Target: "a:v1", OCIDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, classifiedTarget: classifiedTarget{Status: statusConflict, RemoteDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
 		})
 		if err != nil {
 			t.Fatalf("confirmConflictSelection() error = %v", err)

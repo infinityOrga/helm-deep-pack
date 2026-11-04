@@ -72,6 +72,7 @@ func ValidateURL(name, value string, allowInsecureHTTP bool) error {
 
 // ValidateChartName checks that a string is a valid Helm chart name.
 func ValidateChartName(name, value string) error {
+	//nolint:staticcheck // AGENTS.md requires Helm's chart metadata validator.
 	if err := chartutil.ValidateMetadataName(value); err != nil {
 		return fmt.Errorf("%s %w", name, err)
 	}
