@@ -170,7 +170,7 @@ func selectItemsToPush(ctx context.Context, opts Options, destRegistry string, s
 	classified := classifyImages(ctx, destRegistry, opts.AllowInsecureHTTP, specs)
 	var classifiedChartItem *classifiedChart
 	if chart != nil {
-		item := classifyChartWithHead(ctx, destRegistry, opts.AllowInsecureHTTP, chart, headOrGet)
+		item := classifyChartWithHead(ctx, destRegistry, opts.AllowInsecureHTTP, chart, probeTarget)
 		classifiedChartItem = &item
 		if item.Status == statusUnknown {
 			if _, err := fmt.Fprintf(opts.Out, "warning: could not check Helm chart %s:%s in registry: %v\n", chart.targetPath(), chart.version, item.ProbeErr); err != nil {
@@ -188,9 +188,9 @@ func selectItemsToPush(ctx context.Context, opts Options, destRegistry string, s
 	}
 
 	selected, cancelled, err := runSelect(opts.In, opts.Out, classified, classifiedChartItem, destRegistry, func(spec pushspec.ArchiveSpec) classifiedImage {
-		return classifyOne(ctx, destRegistry, opts.AllowInsecureHTTP, spec, headOrGet)
+		return classifyOne(ctx, destRegistry, opts.AllowInsecureHTTP, spec, probeTarget)
 	}, func(bundle *chartBundle) classifiedChart {
-		return classifyChartWithHead(ctx, destRegistry, opts.AllowInsecureHTTP, bundle, headOrGet)
+		return classifyChartWithHead(ctx, destRegistry, opts.AllowInsecureHTTP, bundle, probeTarget)
 	})
 	if err != nil {
 		return pushSelection{}, false, fmt.Errorf("select push items: %w", err)

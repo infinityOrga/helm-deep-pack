@@ -2,7 +2,6 @@ package push
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"helm-deep-pack/internal/pushspec"
 	"io"
@@ -276,7 +275,7 @@ func TestClassifyTargetAgainstRealRegistry(t *testing.T) {
 		"team/app:2":  statusNewTag,
 		"team/app:1":  statusTagExists,
 	} {
-		got := classifyTarget(context.Background(), host, target, true, "", headOrGet)
+		got := classifyTarget(context.Background(), host, target, true, "", probeTarget)
 		if got.Status != want {
 			t.Errorf("%s: status = %q (err %v), want %q", target, got.Status, got.ProbeErr, want)
 		}
@@ -296,71 +295,61 @@ func TestClassifyTargetBareNotFoundIsMissing(t *testing.T) {
 	}
 }
 
-func TestHeadOrGetBranches(t *testing.T) {
-	const nameUnknown = `{"errors":[{"code":"NAME_UNKNOWN","message":"repository name not known"}]}`
-	digest := "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" // sha256 of "{}"
-	tests := []struct {
-		name       string
-		head, get  int
-		getBody    string
-		wantDigest bool
-		wantStatus targetStatus
-		wantMiss   bool
-		wantCode   int
-	}{
-		{name: "head ok", head: 200, wantDigest: true},
-		{name: "new repository", head: 404, get: 404, getBody: nameUnknown, wantStatus: statusNewRepository},
-		{name: "missing", head: 404, get: 404, wantMiss: true},
-		{name: "get fallback", head: 404, get: 200, wantDigest: true},
-		{name: "head error", head: 500, wantCode: 500},
+// distributionLikeRegistry mimics distribution/registry: a missing tag is a
+// body-less 404 (HEAD) or MANIFEST_UNKNOWN even when the repository does not
+// exist; only the tags list distinguishes an unknown repository.
+func distributionLikeRegistry(t *testing.T, digest string) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/":
+			return
+		case "/v2/team/app/manifests/1":
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			w.Header().Set("Docker-Content-Digest", digest)
+			w.Header().Set("Content-Length", "2")
+			return
+		case "/v2/team/app/tags/list":
+			_, _ = io.WriteString(w, `{"name":"team/app","tags":["1"]}`)
+			return
+		case "/v2/locked/app/tags/list":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"errors":[{"code":"DENIED"}]}`)
+			return
+		case "/v2/broken/app/manifests/1":
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/tags/list") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"errors":[{"code":"NAME_UNKNOWN"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"errors":[{"code":"MANIFEST_UNKNOWN"}]}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return strings.TrimPrefix(server.URL, "http://")
+}
+
+func TestProbeTargetAgainstDistributionLikeRegistry(t *testing.T) {
+	digest := "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+	host := distributionLikeRegistry(t, digest)
+	probe := func(ref name.Reference, opts ...remote.Option) (*v1.Descriptor, error) {
+		return probeTarget(ref, append(opts, remote.WithRetryBackoff(remote.Backoff{Steps: 1}))...)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/v2/" {
-					return
-				}
-				status := tt.head
-				if r.Method == http.MethodGet {
-					status = tt.get
-				}
-				w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
-				w.Header().Set("Docker-Content-Digest", digest)
-				if status == 200 {
-					w.Header().Set("Content-Length", "2")
-				}
-				w.WriteHeader(status)
-				if r.Method == http.MethodGet && status == 404 {
-					_, _ = io.WriteString(w, tt.getBody)
-				} else if r.Method == http.MethodGet {
-					_, _ = io.WriteString(w, "{}")
-				}
-			}))
-			defer server.Close()
-			ref, err := name.ParseReference(strings.TrimPrefix(server.URL, "http://")+"/a/b:1", name.Insecure)
-			if err != nil {
-				t.Fatal(err)
-			}
-			desc, err := headOrGet(ref, remote.WithRetryBackoff(remote.Backoff{Steps: 1}))
-			switch {
-			case tt.wantDigest:
-				if err != nil || desc == nil || desc.Digest.String() != digest {
-					t.Fatalf("desc = %+v, err = %v", desc, err)
-				}
-			case tt.wantMiss:
-				if !errors.Is(err, errMissing) {
-					t.Fatalf("err = %v, want errMissing", err)
-				}
-			case tt.wantCode != 0:
-				var te *transport.Error
-				if !errors.As(err, &te) || te.StatusCode != tt.wantCode {
-					t.Fatalf("err = %v, want status %d", err, tt.wantCode)
-				}
-			default:
-				if got, _ := missingTargetStatus(err); got != tt.wantStatus {
-					t.Fatalf("status = %v, err = %v", got, err)
-				}
-			}
-		})
+	for target, want := range map[string]targetStatus{
+		"never/created:1": statusNewRepository,
+		"team/app:2":      statusNewTag,
+		"team/app:1":      statusTagExists,
+		"locked/app:1":    statusMissing,
+		"broken/app:1":    statusUnknown,
+	} {
+		got := classifyTarget(context.Background(), host, target, true, "", probe)
+		if got.Status != want {
+			t.Errorf("%s: status = %q (err %v), want %q", target, got.Status, got.ProbeErr, want)
+		}
 	}
 }

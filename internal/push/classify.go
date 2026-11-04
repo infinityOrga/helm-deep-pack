@@ -26,7 +26,11 @@ const (
 	statusUnknown       targetStatus = "unknown"
 )
 
-var errMissing = errors.New("not found")
+var (
+	errMissing       = errors.New("not found")
+	errNewTag        = errors.New("tag not found")
+	errNewRepository = errors.New("repository not found")
+)
 
 type classifiedImage struct {
 	Spec pushspec.ArchiveSpec
@@ -75,7 +79,12 @@ func classifyTarget(ctx context.Context, registry, target string, allowInsecureH
 		if status, ok := missingTargetStatus(err); ok {
 			return classifiedTarget{Status: status}
 		}
-		if errors.Is(err, errMissing) {
+		switch {
+		case errors.Is(err, errNewRepository):
+			return classifiedTarget{Status: statusNewRepository}
+		case errors.Is(err, errNewTag):
+			return classifiedTarget{Status: statusNewTag}
+		case errors.Is(err, errMissing):
 			return classifiedTarget{Status: statusMissing}
 		}
 		return classifiedTarget{Status: statusUnknown, ProbeErr: err}
@@ -91,25 +100,28 @@ func classifyTarget(ctx context.Context, registry, target string, allowInsecureH
 	return classifiedTarget{Status: statusConflict, RemoteDigest: remoteDigest}
 }
 
-// headOrGet retries a body-less HEAD 404 as a GET, whose error body carries the diagnostic code.
-func headOrGet(ref name.Reference, opts ...remote.Option) (*v1.Descriptor, error) {
+// probeTarget HEADs the manifest. Registries (e.g. distribution/registry) answer a
+// missing tag with 404 even when the repository does not exist, so on 404 the
+// repository's tag list decides between a new tag and a new repository.
+func probeTarget(ref name.Reference, opts ...remote.Option) (*v1.Descriptor, error) {
 	desc, err := remote.Head(ref, opts...)
 	var transportErr *transport.Error
 	if err == nil || !errors.As(err, &transportErr) || transportErr.StatusCode != http.StatusNotFound {
 		return desc, err
 	}
-	got, getErr := remote.Get(ref, opts...)
-	if getErr == nil {
-		return &got.Descriptor, nil
+	_, listErr := remote.List(ref.Context(), opts...)
+	switch {
+	case listErr == nil:
+		return nil, errNewTag
+	case errors.As(listErr, &transportErr) && transportErr.StatusCode == http.StatusNotFound:
+		return nil, errNewRepository
+	default:
+		return nil, errMissing
 	}
-	if _, ok := missingTargetStatus(getErr); ok || !errors.As(getErr, &transportErr) || transportErr.StatusCode != http.StatusNotFound {
-		return nil, getErr
-	}
-	return nil, errMissing
 }
 
 func classifyImages(ctx context.Context, registry string, allowInsecureHTTP bool, specs []pushspec.ArchiveSpec) []classifiedImage {
-	return classifyImagesWithHead(ctx, registry, allowInsecureHTTP, specs, headOrGet)
+	return classifyImagesWithHead(ctx, registry, allowInsecureHTTP, specs, probeTarget)
 }
 
 func classifyImagesWithHead(ctx context.Context, registry string, allowInsecureHTTP bool, specs []pushspec.ArchiveSpec, headFn remoteHeadFn) []classifiedImage {
