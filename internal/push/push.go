@@ -91,6 +91,9 @@ func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.
 	if err != nil {
 		return fmt.Errorf("read chart bundle: %w", err)
 	}
+	if chart != nil {
+		chart.target = manifest.ChartTarget
+	}
 	if chart == nil {
 		if err := warnMissingChart(progress.StatusWriter(status...)); err != nil {
 			return err
@@ -125,8 +128,16 @@ func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.
 			return nil
 		}
 		selection = chosen
-		if selection.Retargeted != nil {
-			if err := e.writePushManifest(resolvedInputDir, selection.Retargeted); err != nil {
+		if selection.Retargeted != nil || selection.ChartTarget != "" {
+			specs, chartTarget := selection.Retargeted, manifest.ChartTarget
+			if specs == nil {
+				specs = manifest.Images
+			}
+			if selection.ChartTarget != "" {
+				chartTarget = selection.ChartTarget
+				chart.target = chartTarget
+			}
+			if err := e.writePushManifest(resolvedInputDir, specs, chartTarget); err != nil {
 				if _, werr := fmt.Fprintf(progress.StatusWriter(status...), "warning: could not save retargeted images to push_images.json: %v\n", err); werr != nil {
 					return fmt.Errorf("write warning output: %w", werr)
 				}
@@ -150,6 +161,8 @@ type pushSelection struct {
 	Chart  bool
 	// Retargeted holds every image spec with its edited target; nil when no target changed.
 	Retargeted []pushspec.ArchiveSpec
+	// ChartTarget is the edited chart repository path; empty when unchanged.
+	ChartTarget string
 }
 
 // selectItemsToPush runs the interactive chooser and image conflict confirmation.
@@ -158,10 +171,10 @@ func selectItemsToPush(ctx context.Context, opts Options, destRegistry string, s
 	classified := classifyImages(ctx, destRegistry, opts.AllowInsecureHTTP, specs)
 	var classifiedChartItem *classifiedChart
 	if chart != nil {
-		item := classifyChartWithHead(ctx, destRegistry, opts.AllowInsecureHTTP, chart, remote.Head)
+		item := classifyChartWithHead(ctx, destRegistry, opts.AllowInsecureHTTP, chart, headOrGet)
 		classifiedChartItem = &item
 		if item.Status == statusUnknown {
-			if _, err := fmt.Fprintf(opts.Out, "warning: could not check Helm chart %s:%s in registry: %v\n", chart.name, chart.version, item.ProbeErr); err != nil {
+			if _, err := fmt.Fprintf(opts.Out, "warning: could not check Helm chart %s:%s in registry: %v\n", chart.repo(), chart.version, item.ProbeErr); err != nil {
 				return pushSelection{}, false, fmt.Errorf("write warning output: %w", err)
 			}
 		}
@@ -176,7 +189,9 @@ func selectItemsToPush(ctx context.Context, opts Options, destRegistry string, s
 	}
 
 	selected, cancelled, err := runSelect(opts.In, opts.Out, classified, classifiedChartItem, destRegistry, func(spec pushspec.ArchiveSpec) classifiedImage {
-		return classifyOne(ctx, destRegistry, opts.AllowInsecureHTTP, spec, remote.Head)
+		return classifyOne(ctx, destRegistry, opts.AllowInsecureHTTP, spec, headOrGet)
+	}, func(bundle *chartBundle) classifiedChart {
+		return classifyChartWithHead(ctx, destRegistry, opts.AllowInsecureHTTP, bundle, headOrGet)
 	})
 	if err != nil {
 		return pushSelection{}, false, fmt.Errorf("select push items: %w", err)
@@ -264,10 +279,12 @@ func (e Engine) pushSpecs(ctx context.Context, registry string, layoutPath layou
 	for _, spec := range specs {
 		spec := spec
 		group.Go(func() error {
-			progressTracker.Begin(spec.Image)
-			defer progressTracker.End(spec.Image)
+			item := strings.TrimRight(registry, "/") + "/" + spec.Target
+			progressTracker.Begin(item)
+			progressTracker.Update(item, 0, 0, "pushing")
+			defer progressTracker.End(item)
 
-			if err := e.pushImageToRegistry(groupCtx, registry, allowInsecureHTTP, layoutPath, spec.Image, spec.Target, spec.OCIDigest); err != nil {
+			if err := e.pushImageToRegistry(groupCtx, registry, allowInsecureHTTP, layoutPath, spec.Image, spec.Target, spec.OCIDigest, progressTracker, item); err != nil {
 				return fmt.Errorf("push %s: %w", spec.Image, err)
 			}
 			return nil
@@ -280,11 +297,11 @@ func (e Engine) pushSpecs(ctx context.Context, registry string, layoutPath layou
 	return nil
 }
 
-func (e Engine) pushImageToRegistry(ctx context.Context, registry string, allowInsecureHTTP bool, layoutPath layout.Path, sourceImage, target, ociDigest string) error {
+func (e Engine) pushImageToRegistry(ctx context.Context, registry string, allowInsecureHTTP bool, layoutPath layout.Path, sourceImage, target, ociDigest string, progressTracker *progress.Progress, item string) error {
 	if e.copyImageToRegistry != nil {
 		return e.copyImageToRegistry(ctx, registry, allowInsecureHTTP, layoutPath, sourceImage, target, ociDigest)
 	}
-	return e.copyImageToRegistryUsingGoContainerRegistry(ctx, registry, allowInsecureHTTP, layoutPath, sourceImage, target, ociDigest)
+	return e.copyImageToRegistryUsingGoContainerRegistry(ctx, registry, allowInsecureHTTP, layoutPath, sourceImage, target, ociDigest, progressTracker, item)
 }
 
 func (e Engine) resolvePushInputDir(inputDir string) (string, error) {
@@ -493,7 +510,7 @@ func confirmInsecureHTTP(in io.Reader, out io.Writer, registry string) (bool, er
 	}
 }
 
-func (e Engine) copyImageToRegistryUsingGoContainerRegistry(ctx context.Context, registry string, allowInsecureHTTP bool, layoutPath layout.Path, sourceImage, target, ociDigest string) error {
+func (e Engine) copyImageToRegistryUsingGoContainerRegistry(ctx context.Context, registry string, allowInsecureHTTP bool, layoutPath layout.Path, sourceImage, target, ociDigest string, progressTracker *progress.Progress, item string) error {
 	if _, err := name.ParseReference(sourceImage); err != nil {
 		return fmt.Errorf("parse source image %q: %w", sourceImage, err)
 	}
@@ -519,7 +536,35 @@ func (e Engine) copyImageToRegistryUsingGoContainerRegistry(ctx context.Context,
 		return fmt.Errorf("parse destination reference %q: %w", registry+"/"+target, err)
 	}
 
-	if err := e.writeRemoteImage(destRef, img, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain)); err != nil {
+	writeOpts := []remote.Option{remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain)}
+	if progressTracker != nil {
+		updates := make(chan v1.Update, 16)
+		stop := make(chan struct{})
+		drained := make(chan struct{})
+		go func() {
+			defer close(drained)
+			for {
+				select {
+				case update, ok := <-updates:
+					if !ok {
+						return
+					}
+					if update.Total > 0 {
+						progressTracker.Update(item, update.Complete, update.Total, "pushing")
+					}
+				case <-stop:
+					return
+				}
+			}
+		}()
+		defer func() {
+			close(stop)
+			<-drained
+		}()
+		writeOpts = append(writeOpts, remote.WithProgress(updates))
+	}
+
+	if err := e.writeRemoteImage(destRef, img, writeOpts...); err != nil {
 		if looksLikeWebsite(err) {
 			return fmt.Errorf("registry %q does not look like a container registry", registry)
 		}

@@ -22,8 +22,11 @@ const (
 	statusMirrored      targetStatus = "mirrored"
 	statusTagExists     targetStatus = "tag exists"
 	statusConflict      targetStatus = "conflict"
+	statusMissing       targetStatus = "missing"
 	statusUnknown       targetStatus = "unknown"
 )
+
+var errMissing = errors.New("not found")
 
 type classifiedImage struct {
 	Spec pushspec.ArchiveSpec
@@ -53,7 +56,7 @@ func classifyOne(ctx context.Context, registry string, allowInsecureHTTP bool, s
 func classifyChartWithHead(ctx context.Context, registry string, allowInsecureHTTP bool, bundle *chartBundle, headFn remoteHeadFn) classifiedChart {
 	return classifiedChart{
 		Bundle:           bundle,
-		classifiedTarget: classifyTarget(ctx, registry, bundle.name+":"+bundle.tag, allowInsecureHTTP, "", headFn),
+		classifiedTarget: classifyTarget(ctx, registry, bundle.repo()+":"+bundle.tag, allowInsecureHTTP, "", headFn),
 	}
 }
 
@@ -72,6 +75,9 @@ func classifyTarget(ctx context.Context, registry, target string, allowInsecureH
 		if status, ok := missingTargetStatus(err); ok {
 			return classifiedTarget{Status: status}
 		}
+		if errors.Is(err, errMissing) {
+			return classifiedTarget{Status: statusMissing}
+		}
 		return classifiedTarget{Status: statusUnknown, ProbeErr: err}
 	}
 
@@ -85,8 +91,25 @@ func classifyTarget(ctx context.Context, registry, target string, allowInsecureH
 	return classifiedTarget{Status: statusConflict, RemoteDigest: remoteDigest}
 }
 
+// headOrGet retries a body-less HEAD 404 as a GET, whose error body carries the diagnostic code.
+func headOrGet(ref name.Reference, opts ...remote.Option) (*v1.Descriptor, error) {
+	desc, err := remote.Head(ref, opts...)
+	var transportErr *transport.Error
+	if err == nil || !errors.As(err, &transportErr) || transportErr.StatusCode != http.StatusNotFound {
+		return desc, err
+	}
+	got, getErr := remote.Get(ref, opts...)
+	if getErr == nil {
+		return &got.Descriptor, nil
+	}
+	if _, ok := missingTargetStatus(getErr); ok || !errors.As(getErr, &transportErr) || transportErr.StatusCode != http.StatusNotFound {
+		return nil, getErr
+	}
+	return nil, errMissing
+}
+
 func classifyImages(ctx context.Context, registry string, allowInsecureHTTP bool, specs []pushspec.ArchiveSpec) []classifiedImage {
-	return classifyImagesWithHead(ctx, registry, allowInsecureHTTP, specs, remote.Head)
+	return classifyImagesWithHead(ctx, registry, allowInsecureHTTP, specs, headOrGet)
 }
 
 func classifyImagesWithHead(ctx context.Context, registry string, allowInsecureHTTP bool, specs []pushspec.ArchiveSpec, headFn remoteHeadFn) []classifiedImage {

@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"helm-deep-pack/internal/progress"
 	"helm-deep-pack/internal/pushspec"
 	"io"
+	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,8 +20,10 @@ import (
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/layout"
+	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
@@ -386,6 +391,8 @@ func TestCopyImageToRegistrySupportsDigestReferences(t *testing.T) {
 		"quay.io/example/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"example/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		nil,
+		"",
 	); err != nil {
 		t.Fatalf("engine.copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
 	}
@@ -415,6 +422,8 @@ func TestCopyImageToRegistryReportsWebsiteLikeRegistryErrors(t *testing.T) {
 		"quay.io/example/api:v1",
 		"example/api:v1",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		nil,
+		"",
 	)
 	if err == nil {
 		t.Fatal("engine.copyImageToRegistryUsingGoContainerRegistry() error = nil, want website error")
@@ -441,6 +450,8 @@ func TestCopyImageToRegistryPreservesRegistry404Errors(t *testing.T) {
 		"quay.io/example/api:v1",
 		"example/api:v1",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		nil,
+		"",
 	)
 	if err == nil {
 		t.Fatal("engine.copyImageToRegistryUsingGoContainerRegistry() error = nil, want registry 404 error")
@@ -487,7 +498,7 @@ func TestPushImagesReportsProgress(t *testing.T) {
 	if strings.Contains(got, "\x1b[") || strings.Contains(got, "\r") {
 		t.Fatalf("PushImages() status unexpectedly used terminal control codes: %q", got)
 	}
-	if !strings.Contains(got, "pushing 1/1: busybox:1.36") {
+	if !strings.Contains(got, "pushing 1/1: registry.local:5000/library/busybox:1.36") {
 		t.Fatalf("PushImages() status = %q", got)
 	}
 }
@@ -766,6 +777,8 @@ func TestCopyImageToRegistryAllowInsecureHTTPUsesHTTPReference(t *testing.T) {
 		"quay.io/example/api:v1",
 		"example/api:v1",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		nil,
+		"",
 	); err != nil {
 		t.Fatalf("engine.copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
 	}
@@ -982,7 +995,7 @@ func TestConfirmConflictSelection(t *testing.T) {
 	})
 }
 
-func retargetPushFixture(t *testing.T, writeFn func(string, []pushspec.ArchiveSpec) error) (Engine, string, *[]string, *bytes.Buffer) {
+func retargetPushFixture(t *testing.T, writeFn func(string, []pushspec.ArchiveSpec, string) error) (Engine, string, *[]string, *bytes.Buffer) {
 	t.Helper()
 	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
 		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
@@ -1033,7 +1046,7 @@ func TestPushImagesSavesRetargetedManifestAndPushesNewTarget(t *testing.T) {
 }
 
 func TestPushImagesWarnsWhenRetargetedManifestWriteFails(t *testing.T) {
-	engine, dir, targets, status := retargetPushFixture(t, func(string, []pushspec.ArchiveSpec) error { return errors.New("disk full") })
+	engine, dir, targets, status := retargetPushFixture(t, func(string, []pushspec.ArchiveSpec, string) error { return errors.New("disk full") })
 	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1}, status); err != nil {
 		t.Fatalf("PushImages() error = %v", err)
 	}
@@ -1042,5 +1055,70 @@ func TestPushImagesWarnsWhenRetargetedManifestWriteFails(t *testing.T) {
 	}
 	if len(*targets) != 1 || (*targets)[0] != "team/bb:1.36" {
 		t.Fatalf("pushed targets = %v", *targets)
+	}
+}
+
+func TestPushImagesSavesChartTargetAndPushesChartThere(t *testing.T) {
+	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
+		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
+	})
+	engine := newPushTestEngine(probeClient)
+	engine.isInteractive = func(io.Reader, io.Writer) bool { return true }
+	engine.selectItemsToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec, *chartBundle) (pushSelection, bool, error) {
+		return pushSelection{Chart: true, ChartTarget: "charts/app"}, true, nil
+	}
+	var pushedRepo string
+	engine.pushChartArtifact = func(_ context.Context, _ string, _ bool, chart *chartBundle, _ io.Writer) error {
+		pushedRepo = chart.repo()
+		return nil
+	}
+	dir := t.TempDir()
+	writePushManifestFixture(t, dir, nil)
+	if err := os.WriteFile(filepath.Join(dir, "example-1.2.3.tgz"), chartArchiveFixture(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1}); err != nil {
+		t.Fatalf("PushImages() error = %v", err)
+	}
+	manifest, err := pushspec.ReadPushManifest(dir)
+	if err != nil || manifest.ChartTarget != "charts/app" {
+		t.Fatalf("manifest = %+v, err = %v", manifest, err)
+	}
+	if pushedRepo != "charts/app" {
+		t.Fatalf("pushed chart repo = %q", pushedRepo)
+	}
+}
+
+func TestCopyImageToRegistryReportsUploadedBytesUnderDestination(t *testing.T) {
+	server := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	defer server.Close()
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	img, err := random.Image(4096, 2)
+	if err != nil {
+		t.Fatalf("random.Image() error = %v", err)
+	}
+	digest, err := img.Digest()
+	if err != nil {
+		t.Fatalf("Digest() error = %v", err)
+	}
+	engine := NewEngine()
+	engine.loadLayoutImage = func(layout.Path, v1.Hash) (v1.Image, error) { return img, nil }
+
+	status := new(bytes.Buffer)
+	tracker := progress.New(status, "pushing", 1)
+	item := host + "/example/api:v1"
+	tracker.Begin(item)
+	if err := engine.copyImageToRegistryUsingGoContainerRegistry(context.Background(), host, true, layout.Path(""), "quay.io/example/api:v1", "example/api:v1", digest.String(), tracker, item); err != nil {
+		t.Fatalf("copyImageToRegistryUsingGoContainerRegistry() error = %v", err)
+	}
+	tracker.End(item)
+
+	got := status.String()
+	if !strings.Contains(got, "pushing 1/1: "+item+" ") {
+		t.Fatalf("status = %q, want destination %q", got, item)
+	}
+	if strings.Contains(got, " 0 B/") || strings.Contains(got, "/0 B") {
+		t.Fatalf("status = %q, want uploaded size", got)
 	}
 }

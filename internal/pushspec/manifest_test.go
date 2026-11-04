@@ -116,3 +116,21 @@ func TestWritePushManifestWritesManifestFile(t *testing.T) {
 		t.Fatalf("WritePushManifest() images = %#v", manifest.Images)
 	}
 }
+
+func TestChartTargetRoundTripsAndOldManifestReadsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	specs := []ArchiveSpec{{Image: "a", Target: "a:1", OCIDigest: "sha256:x"}}
+	if err := WritePushManifestWithChart(dir, specs, "team/app"); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ReadPushManifest(dir)
+	if err != nil || m.ChartTarget != "team/app" {
+		t.Fatalf("manifest = %+v, err = %v", m, err)
+	}
+	if err := WritePushManifest(dir, specs); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ = ReadPushManifest(dir); m.ChartTarget != "" {
+		t.Fatalf("ChartTarget = %q, want empty", m.ChartTarget)
+	}
+}

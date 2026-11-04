@@ -432,7 +432,7 @@ func runSelectScript(t *testing.T, script string, images []classifiedImage, char
 	reclassify := func(spec pushspec.ArchiveSpec) classifiedImage {
 		return newClassifiedImageForTest(spec, statusNewRepository)
 	}
-	sel, cancelled, err := runSelect(bytes.NewReader([]byte(script)), &out, images, chart, "", reclassify)
+	sel, cancelled, err := runSelect(bytes.NewReader([]byte(script)), &out, images, chart, "", reclassify, nil)
 	if err != nil {
 		t.Fatalf("runSelect() error = %v", err)
 	}
@@ -468,7 +468,7 @@ func TestRunSelectRetargetReprobesAndKeepsChecked(t *testing.T) {
 		return newClassifiedImageForTest(spec, statusConflict)
 	}
 	script := " e" + strings.Repeat("\x7f", 20) + "xx\r\r"
-	_, _, err := runSelect(strings.NewReader(script), &out, retargetFixture(), nil, "", reclassify)
+	_, _, err := runSelect(strings.NewReader(script), &out, retargetFixture(), nil, "", reclassify, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,10 +502,64 @@ func TestRunSelectCancelAfterEditReturnsNothing(t *testing.T) {
 	}
 }
 
-func TestRunSelectEditIgnoredOnChartRow(t *testing.T) {
-	chart := &classifiedChart{Bundle: &chartBundle{name: "c", version: "1", tag: "1"}}
-	sel, _, out := runSelectScript(t, "ex\r\r", retargetFixture(), chart)
-	if strings.Contains(out, "enter save") || sel.Retargeted != nil {
-		t.Fatalf("chart row entered edit mode: %q", out)
+func TestRenderEditRowShowsFullTarget(t *testing.T) {
+	model := newSelectModel([]classifiedImage{
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "busybox:1.36", Target: "library/busybox:1.36"}, statusNewTag),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "nginx", Target: "library/nginx@sha256:abc"}, statusNewTag),
+	}, nil, 10, "reg.io/team")
+	model.startEdit()
+	model.editBuf = "x/bb"
+	if got := model.render()[2]; !strings.Contains(got, "busybox:1.36 → reg.io/team/x/bb▏:1.36") {
+		t.Fatalf("row = %q", got)
+	}
+	model.editing = false
+	model.moveDown()
+	model.startEdit()
+	if got := model.render()[3]; !strings.Contains(got, "→ reg.io/team/library/nginx▏@sha256:abc") {
+		t.Fatalf("row = %q", got)
+	}
+	model.registry = ""
+	if got := model.render()[3]; !strings.Contains(got, "→ library/nginx▏@sha256:abc") {
+		t.Fatalf("row = %q", got)
+	}
+}
+
+func chartFixture() *classifiedChart {
+	return &classifiedChart{Bundle: &chartBundle{name: "demo", version: "1.2.3", tag: "1.2.3"}}
+}
+
+func TestRunSelectRetargetsChart(t *testing.T) {
+	var out bytes.Buffer
+	var probed string
+	reclassifyChart := func(b *chartBundle) classifiedChart {
+		probed = b.repo()
+		return classifiedChart{Bundle: b, classifiedTarget: classifiedTarget{Status: statusConflict}}
+	}
+	script := "e\x7f\x7f\x7f\x7fcharts/app\r\r"
+	sel, cancelled, err := runSelect(strings.NewReader(script), &out, retargetFixture(), chartFixture(), "reg.io", func(s pushspec.ArchiveSpec) classifiedImage {
+		return newClassifiedImageForTest(s, statusNewRepository)
+	}, reclassifyChart)
+	if err != nil || cancelled {
+		t.Fatalf("err = %v, cancelled = %v", err, cancelled)
+	}
+	if sel.ChartTarget != "charts/app" || probed != "charts/app" || sel.Retargeted != nil {
+		t.Fatalf("sel = %+v, probed = %q", sel, probed)
+	}
+	if !strings.Contains(out.String(), "reg.io/charts/app▏:1.2.3") || !strings.Contains(out.String(), "[conflict]") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestRunSelectChartEditEscAndInvalid(t *testing.T) {
+	var out bytes.Buffer
+	re := func(b *chartBundle) classifiedChart { return classifiedChart{Bundle: b} }
+	sel, _, err := runSelect(strings.NewReader("ex\x1b\r"), &out, nil, chartFixture(), "", nil, re)
+	if err != nil || sel.ChartTarget != "" {
+		t.Fatalf("sel = %+v, err = %v", sel, err)
+	}
+	out.Reset()
+	sel, _, _ = runSelect(strings.NewReader("e:x\r\x1b\r"), &out, nil, chartFixture(), "", nil, re)
+	if sel.ChartTarget != "" || !strings.Contains(out.String(), "error:") {
+		t.Fatalf("sel = %+v, out = %q", sel, out.String())
 	}
 }

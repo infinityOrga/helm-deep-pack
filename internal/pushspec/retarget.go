@@ -9,22 +9,30 @@ import (
 
 // Retarget returns spec with its target repository path replaced, keeping the tag or digest.
 func Retarget(spec ArchiveSpec, repoPath string) (ArchiveSpec, error) {
-	repoPath = strings.TrimSpace(repoPath)
-	if repoPath == "" {
-		return spec, fmt.Errorf("target path must not be empty")
+	repoPath, err := ValidateTargetPath(repoPath)
+	if err != nil {
+		return spec, err
 	}
-	if strings.ContainsAny(repoPath, ":@") {
-		return spec, fmt.Errorf("target path %q must not contain a tag or digest", repoPath)
-	}
-	if first, _, _ := strings.Cut(repoPath, "/"); isRegistryHost(first) {
-		return spec, fmt.Errorf("target path %q must not include a registry host", repoPath)
-	}
-	if _, err := name.NewRepository(repoPath); err != nil {
-		return spec, fmt.Errorf("invalid target path %q: %w", repoPath, err)
-	}
-
 	spec.Target = repoPath + strings.TrimPrefix(spec.Target, TargetRepository(spec.Target))
 	return spec, nil
+}
+
+// ValidateTargetPath checks a repository path without registry, tag or digest and returns it trimmed.
+func ValidateTargetPath(repoPath string) (string, error) {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return "", fmt.Errorf("target path must not be empty")
+	}
+	if strings.ContainsAny(repoPath, ":@") {
+		return "", fmt.Errorf("target path %q must not contain a tag or digest", repoPath)
+	}
+	if first, _, _ := strings.Cut(repoPath, "/"); isRegistryHost(first) {
+		return "", fmt.Errorf("target path %q must not include a registry host", repoPath)
+	}
+	if _, err := name.NewRepository(repoPath); err != nil {
+		return "", fmt.Errorf("invalid target path %q: %w", repoPath, err)
+	}
+	return repoPath, nil
 }
 
 // TargetRepository returns target without its tag or digest.

@@ -4,11 +4,16 @@ import (
 	"context"
 	"fmt"
 	"helm-deep-pack/internal/pushspec"
+	"io"
+	"log"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
@@ -245,5 +250,46 @@ func TestClassifyImagesAllowInsecureHTTPUsesHTTPReference(t *testing.T) {
 	}
 	if gotScheme != "http" {
 		t.Fatalf("registry scheme = %q, want %q", gotScheme, "http")
+	}
+}
+
+func TestClassifyTargetAgainstRealRegistry(t *testing.T) {
+	srv := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+	img, err := random.Image(16, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := name.ParseReference(host+"/team/app:1", name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatal(err)
+	}
+
+	for target, want := range map[string]targetStatus{
+		"nope/none:1": statusNewRepository,
+		"team/app:2":  statusNewTag,
+		"team/app:1":  statusTagExists,
+	} {
+		got := classifyTarget(context.Background(), host, target, true, "", headOrGet)
+		if got.Status != want {
+			t.Errorf("%s: status = %q (err %v), want %q", target, got.Status, got.ProbeErr, want)
+		}
+	}
+}
+
+func TestClassifyTargetBareNotFoundIsMissing(t *testing.T) {
+	notFound := func(name.Reference, ...remote.Option) (*v1.Descriptor, error) {
+		return nil, fmt.Errorf("probe: %w", errMissing)
+	}
+	got := classifyTarget(context.Background(), "r.local:5000", "team/a:1", false, "", notFound)
+	if got.Status != statusMissing || got.ProbeErr != nil {
+		t.Fatalf("got %+v", got)
+	}
+	if label, _ := statusDisplay(statusMissing); label != "[missing]" {
+		t.Fatalf("label = %q", label)
 	}
 }

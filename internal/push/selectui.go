@@ -29,6 +29,7 @@ type selectModel struct {
 	editBuf    string
 	editErr    string
 	retargeted bool
+	chartPath  string
 }
 
 func newSelectModel(images []classifiedImage, chart *classifiedChart, height int, registry string) *selectModel {
@@ -128,18 +129,47 @@ func (m *selectModel) selection() pushSelection {
 			sel.Retargeted = append(sel.Retargeted, image.Spec)
 		}
 	}
+	sel.ChartTarget = m.chartPath
 	return sel
 }
 
 func (m *selectModel) startEdit() {
-	if m.itemCount() == 0 || (m.chart != nil && m.cursor == 0) {
+	if m.itemCount() == 0 {
+		return
+	}
+	if m.onChart() {
+		m.editing, m.editBuf, m.editErr = true, m.chart.Bundle.repo(), ""
 		return
 	}
 	target := pushspec.TargetRepository(m.images[m.imageIndex(m.cursor)].Spec.Target)
 	m.editing, m.editBuf, m.editErr = true, target, ""
 }
 
-func (m *selectModel) saveEdit(reclassify func(pushspec.ArchiveSpec) classifiedImage) {
+func (m *selectModel) onChart() bool {
+	return m.chart != nil && m.cursor == 0
+}
+
+func (m *selectModel) saveChartEdit(reclassifyChart func(*chartBundle) classifiedChart) {
+	path, err := pushspec.ValidateTargetPath(m.editBuf)
+	if err != nil {
+		m.editErr = err.Error()
+		return
+	}
+	m.editing = false
+	if path == m.chart.Bundle.repo() {
+		return
+	}
+	bundle := *m.chart.Bundle
+	bundle.target = path
+	chart := reclassifyChart(&bundle)
+	m.chart, m.chartPath = &chart, path
+}
+
+func (m *selectModel) saveEdit(reclassify func(pushspec.ArchiveSpec) classifiedImage, reclassifyChart func(*chartBundle) classifiedChart) {
+	if m.onChart() {
+		m.saveChartEdit(reclassifyChart)
+		return
+	}
 	index := m.imageIndex(m.cursor)
 	spec, err := pushspec.Retarget(m.images[index].Spec, m.editBuf)
 	if err != nil {
@@ -163,12 +193,12 @@ func (m *selectModel) saveEdit(reclassify func(pushspec.ArchiveSpec) classifiedI
 	m.editing, m.retargeted = false, true
 }
 
-func (m *selectModel) editKey(b byte, r *bufio.Reader, reclassify func(pushspec.ArchiveSpec) classifiedImage) (cancel bool) {
+func (m *selectModel) editKey(b byte, r *bufio.Reader, reclassify func(pushspec.ArchiveSpec) classifiedImage, reclassifyChart func(*chartBundle) classifiedChart) (cancel bool) {
 	switch b {
 	case 0x03:
 		return true
 	case '\r', '\n':
-		m.saveEdit(reclassify)
+		m.saveEdit(reclassify, reclassifyChart)
 	case 0x1b:
 		if r.Buffered() == 0 {
 			m.editing = false
@@ -225,7 +255,11 @@ func (m *selectModel) render() []string {
 		}
 		chart := m.chart.Bundle
 		label, _ := statusDisplay(m.chart.Status)
-		lines = append(lines, prefix+checkbox+chart.name+":"+chart.version+" → "+m.chartTarget(chart)+"  "+label)
+		target := m.chartTarget(chart)
+		if m.editing && m.cursor == 0 {
+			target = m.editTarget(m.editBuf, ":"+chart.tag)
+		}
+		lines = append(lines, prefix+checkbox+chart.name+":"+chart.version+" → "+target+"  "+label)
 	}
 
 	imageStart := m.top
@@ -250,7 +284,7 @@ func (m *selectModel) render() []string {
 				target = m.registry + "/" + target
 			}
 			if m.editing && i == m.cursor {
-				target = m.editBuf + "▏"
+				target = m.editTarget(m.editBuf, strings.TrimPrefix(image.Spec.Target, pushspec.TargetRepository(image.Spec.Target)))
 			}
 			body := progress.NormalizeDisplayImage(image.Spec.Image) + " → " + target
 			if image.Spec.Optional {
@@ -273,8 +307,16 @@ func (m *selectModel) render() []string {
 	return lines
 }
 
+func (m *selectModel) editTarget(buf, suffix string) string {
+	target := buf + "▏" + suffix
+	if m.registry != "" {
+		return m.registry + "/" + target
+	}
+	return target
+}
+
 func (m *selectModel) chartTarget(chart *chartBundle) string {
-	ref := chart.name + ":" + chart.tag
+	ref := chart.repo() + ":" + chart.tag
 	if m.registry != "" {
 		return m.registry + "/" + ref
 	}
@@ -291,6 +333,8 @@ func statusDisplay(status targetStatus) (label, color string) {
 		return "[exists]", termstyle.Green
 	case statusTagExists:
 		return "[tag exists]", termstyle.Green
+	case statusMissing:
+		return "[missing]", termstyle.Yellow
 	case statusConflict:
 		return "[conflict]", termstyle.Red
 	case statusUnknown:
@@ -442,7 +486,7 @@ func colorizeRenderLines(lines []string, model *selectModel) []string {
 	return styled
 }
 
-func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *classifiedChart, registry string, reclassify func(pushspec.ArchiveSpec) classifiedImage) (selected pushSelection, cancelled bool, err error) {
+func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *classifiedChart, registry string, reclassify func(pushspec.ArchiveSpec) classifiedImage, reclassifyChart func(*chartBundle) classifiedChart) (selected pushSelection, cancelled bool, err error) {
 	itemCount := len(images)
 	sectionCount := 0
 	if chart != nil {
@@ -514,7 +558,7 @@ func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *cla
 			if err != nil && err != io.EOF {
 				return pushSelection{}, false, err
 			}
-			if err != nil || model.editKey(b, br, reclassify) {
+			if err != nil || model.editKey(b, br, reclassify, reclassifyChart) {
 				if _, err := io.WriteString(out, "\r\n"); err != nil {
 					return pushSelection{}, false, fmt.Errorf("write interactive output: %w", err)
 				}

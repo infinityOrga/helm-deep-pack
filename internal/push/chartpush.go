@@ -32,10 +32,19 @@ const (
 
 type chartBundle struct {
 	name     string
+	target   string
 	version  string
 	tag      string
 	data     []byte
 	metadata map[string]any
+}
+
+// repo is the chart's repository path under the registry.
+func (b *chartBundle) repo() string {
+	if b.target != "" {
+		return b.target
+	}
+	return b.name
 }
 
 func readChartBundle(inputDir string) (*chartBundle, error) {
@@ -107,7 +116,7 @@ func pushChartArtifact(ctx context.Context, destination string, allowInsecureHTT
 	if status == nil {
 		status = io.Discard
 	}
-	ref := fmt.Sprintf("%s/%s:%s", strings.TrimRight(destination, "/"), bundle.name, bundle.tag)
+	ref := fmt.Sprintf("%s/%s:%s", strings.TrimRight(destination, "/"), bundle.repo(), bundle.tag)
 	refOptions := []name.Option{}
 	if allowInsecureHTTP {
 		refOptions = append(refOptions, name.Insecure)

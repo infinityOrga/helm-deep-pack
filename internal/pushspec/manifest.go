@@ -21,9 +21,15 @@ type ArchiveSpec struct {
 type PushManifest struct {
 	LayoutDir string        `json:"layoutDir"`
 	Images    []ArchiveSpec `json:"images"`
+	// ChartTarget is the chart's repository path under the registry; empty means the chart name.
+	ChartTarget string `json:"chartTarget,omitempty"`
 }
 
 func GeneratePushManifest(specs []ArchiveSpec) (string, error) {
+	return generatePushManifest(specs, "")
+}
+
+func generatePushManifest(specs []ArchiveSpec, chartTarget string) (string, error) {
 	for _, spec := range specs {
 		if spec.OCIDigest == "" {
 			return "", fmt.Errorf("missing oci digest for image %q", spec.Image)
@@ -31,8 +37,9 @@ func GeneratePushManifest(specs []ArchiveSpec) (string, error) {
 	}
 
 	data, err := json.MarshalIndent(PushManifest{
-		LayoutDir: OCILayoutDirName(),
-		Images:    specs,
+		LayoutDir:   OCILayoutDirName(),
+		Images:      specs,
+		ChartTarget: chartTarget,
 	}, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal push manifest: %w", err)
@@ -45,7 +52,11 @@ func PushManifestFileName() string {
 }
 
 func WritePushManifest(outputDir string, specs []ArchiveSpec) error {
-	manifest, err := GeneratePushManifest(specs)
+	return WritePushManifestWithChart(outputDir, specs, "")
+}
+
+func WritePushManifestWithChart(outputDir string, specs []ArchiveSpec, chartTarget string) error {
+	manifest, err := generatePushManifest(specs, chartTarget)
 	if err != nil {
 		return fmt.Errorf("generate push manifest: %w", err)
 	}

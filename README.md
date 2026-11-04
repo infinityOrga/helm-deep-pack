@@ -206,7 +206,8 @@ tag when the registry provides that information.
 Press `e` on an image to change its target repository path (the tag or digest is
 kept). The registry is re-checked for that image. Edits are applied when you confirm
 and saved to `push_images.json`, so `--all` reuses them. You can also edit `target`
-in `push_images.json` by hand.
+in `push_images.json` by hand. Press `e` on the Helm chart row to retarget the chart
+repository path the same way (saved as `chartTarget`).
 For CI or other non-interactive environments, provide the registry explicitly
 and use `--all`. You can also omit the registry in an interactive terminal and
 enter it when prompted.
