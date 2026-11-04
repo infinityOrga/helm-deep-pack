@@ -2,6 +2,7 @@ package push
 
 import (
 	"bufio"
+	"bytes"
 	"helm-deep-pack/internal/pushspec"
 	"helm-deep-pack/internal/termstyle"
 	"strings"
@@ -422,5 +423,89 @@ func TestColorizeRenderLines(t *testing.T) {
 	}
 	if !strings.Contains(styled[len(styled)-1], termstyle.Bold) {
 		t.Fatalf("footer style mismatch: %q", styled[len(styled)-1])
+	}
+}
+
+func runSelectScript(t *testing.T, script string, images []classifiedImage, chart *classifiedChart) (pushSelection, bool, string) {
+	t.Helper()
+	var out bytes.Buffer
+	reclassify := func(spec pushspec.ArchiveSpec) classifiedImage {
+		return newClassifiedImageForTest(spec, statusNewRepository)
+	}
+	sel, cancelled, err := runSelect(bytes.NewReader([]byte(script)), &out, images, chart, "", reclassify)
+	if err != nil {
+		t.Fatalf("runSelect() error = %v", err)
+	}
+	return sel, cancelled, out.String()
+}
+
+func retargetFixture() []classifiedImage {
+	return []classifiedImage{
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "busybox:1.36", Target: "library/busybox:1.36"}, statusMirrored),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "alpine:3.18", Target: "library/alpine:1.36"}, statusMirrored),
+	}
+}
+
+func TestRunSelectRetargetAndConfirm(t *testing.T) {
+	sel, cancelled, out := runSelectScript(t, "e"+strings.Repeat("\x7f", 20)+"team/bb\r \r", retargetFixture(), nil)
+	if cancelled {
+		t.Fatal("cancelled = true")
+	}
+	if !strings.Contains(out, "enter save") {
+		t.Fatalf("output missing edit hint: %q", out)
+	}
+	if len(sel.Retargeted) != 2 || sel.Retargeted[0].Target != "team/bb:1.36" || sel.Retargeted[1].Target != "library/alpine:1.36" {
+		t.Fatalf("Retargeted = %+v", sel.Retargeted)
+	}
+	if len(sel.Images) != 1 || sel.Images[0].Target != "team/bb:1.36" {
+		t.Fatalf("Images = %+v", sel.Images)
+	}
+}
+
+func TestRunSelectRetargetReprobesAndKeepsChecked(t *testing.T) {
+	var out bytes.Buffer
+	reclassify := func(spec pushspec.ArchiveSpec) classifiedImage {
+		return newClassifiedImageForTest(spec, statusConflict)
+	}
+	script := " e" + strings.Repeat("\x7f", 20) + "xx\r\r"
+	_, _, err := runSelect(strings.NewReader(script), &out, retargetFixture(), nil, "", reclassify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "[conflict]") {
+		t.Fatalf("output missing reprobed status: %q", out.String())
+	}
+}
+
+func TestRunSelectEscDiscardsEdit(t *testing.T) {
+	sel, _, _ := runSelectScript(t, "ex\x1b\r", retargetFixture(), nil)
+	if sel.Retargeted != nil {
+		t.Fatalf("Retargeted = %+v, want nil", sel.Retargeted)
+	}
+}
+
+func TestRunSelectRejectsDuplicateTarget(t *testing.T) {
+	script := "e" + strings.Repeat("\x7f", 20) + "library/alpine\r\x1b\r"
+	sel, _, out := runSelectScript(t, script, retargetFixture(), nil)
+	if !strings.Contains(out, "library/alpine:1.36") || !strings.Contains(out, "duplicate") {
+		t.Fatalf("output missing duplicate error: %q", out)
+	}
+	if sel.Retargeted != nil {
+		t.Fatalf("Retargeted = %+v, want nil", sel.Retargeted)
+	}
+}
+
+func TestRunSelectCancelAfterEditReturnsNothing(t *testing.T) {
+	sel, cancelled, _ := runSelectScript(t, "ex\rq", retargetFixture(), nil)
+	if !cancelled || sel.Retargeted != nil {
+		t.Fatalf("cancelled = %v, Retargeted = %+v", cancelled, sel.Retargeted)
+	}
+}
+
+func TestRunSelectEditIgnoredOnChartRow(t *testing.T) {
+	chart := &classifiedChart{Bundle: &chartBundle{name: "c", version: "1", tag: "1"}}
+	sel, _, out := runSelectScript(t, "ex\r\r", retargetFixture(), chart)
+	if strings.Contains(out, "enter save") || sel.Retargeted != nil {
+		t.Fatalf("chart row entered edit mode: %q", out)
 	}
 }

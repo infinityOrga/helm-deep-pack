@@ -203,6 +203,10 @@ In a terminal, omit `--all` to review the chart and staged images and select wha
 to push. The Helm chart appears first and is selected by default; images follow
 under their own heading. Status labels distinguish a new repository from a new
 tag when the registry provides that information.
+Press `e` on an image to change its target repository path (the tag or digest is
+kept). The registry is re-checked for that image. Edits are applied when you confirm
+and saved to `push_images.json`, so `--all` reuses them. You can also edit `target`
+in `push_images.json` by hand.
 For CI or other non-interactive environments, provide the registry explicitly
 and use `--all`. You can also omit the registry in an interactive terminal and
 enter it when prompted.

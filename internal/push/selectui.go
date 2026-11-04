@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -23,6 +24,11 @@ type selectModel struct {
 	chartChecked bool
 	top          int
 	height       int
+
+	editing    bool
+	editBuf    string
+	editErr    string
+	retargeted bool
 }
 
 func newSelectModel(images []classifiedImage, chart *classifiedChart, height int, registry string) *selectModel {
@@ -116,7 +122,72 @@ func (m *selectModel) selectedSpecs() []pushspec.ArchiveSpec {
 }
 
 func (m *selectModel) selection() pushSelection {
-	return pushSelection{Images: m.selectedSpecs(), Chart: m.chartChecked}
+	sel := pushSelection{Images: m.selectedSpecs(), Chart: m.chartChecked}
+	if m.retargeted {
+		for _, image := range m.images {
+			sel.Retargeted = append(sel.Retargeted, image.Spec)
+		}
+	}
+	return sel
+}
+
+func (m *selectModel) startEdit() {
+	if m.itemCount() == 0 || (m.chart != nil && m.cursor == 0) {
+		return
+	}
+	target := pushspec.TargetRepository(m.images[m.imageIndex(m.cursor)].Spec.Target)
+	m.editing, m.editBuf, m.editErr = true, target, ""
+}
+
+func (m *selectModel) saveEdit(reclassify func(pushspec.ArchiveSpec) classifiedImage) {
+	index := m.imageIndex(m.cursor)
+	spec, err := pushspec.Retarget(m.images[index].Spec, m.editBuf)
+	if err != nil {
+		m.editErr = err.Error()
+		return
+	}
+	if spec.Target == m.images[index].Spec.Target {
+		m.editing = false
+		return
+	}
+	specs := make([]pushspec.ArchiveSpec, len(m.images))
+	for i, image := range m.images {
+		specs[i] = image.Spec
+	}
+	specs[index] = spec
+	if a, b, found := pushspec.DuplicateTarget(specs); found {
+		m.editErr = fmt.Sprintf("duplicate target %s (%s and %s)", a.Target, a.Image, b.Image)
+		return
+	}
+	m.images[index] = reclassify(spec)
+	m.editing, m.retargeted = false, true
+}
+
+func (m *selectModel) editKey(b byte, r *bufio.Reader, reclassify func(pushspec.ArchiveSpec) classifiedImage) (cancel bool) {
+	switch b {
+	case 0x03:
+		return true
+	case '\r', '\n':
+		m.saveEdit(reclassify)
+	case 0x1b:
+		if r.Buffered() == 0 {
+			m.editing = false
+			return false
+		}
+		if next, _ := r.ReadByte(); next == '[' || next == 'O' {
+			_, _ = r.ReadByte()
+		}
+	case 0x7f, 0x08:
+		if m.editBuf != "" {
+			_, size := utf8.DecodeLastRuneInString(m.editBuf)
+			m.editBuf = m.editBuf[:len(m.editBuf)-size]
+		}
+	default:
+		if b >= 0x20 {
+			m.editBuf += string([]byte{b})
+		}
+	}
+	return false
 }
 
 func (m *selectModel) selectedCount() int {
@@ -135,7 +206,11 @@ func (m *selectModel) selectedCount() int {
 func (m *selectModel) render() []string {
 	lines := make([]string, 0)
 
-	lines = append(lines, "Select items to push (↑/↓ move · space toggle · a all · enter confirm · esc cancel)")
+	if m.editing {
+		lines = append(lines, "Edit target path (enter save · esc discard)")
+	} else {
+		lines = append(lines, "Select items to push (↑/↓ move · space toggle · a all · e retarget · enter confirm · esc cancel)")
+	}
 
 	end := min(m.top+m.height, m.itemCount())
 	if m.chart != nil && m.top == 0 && end > 0 {
@@ -174,6 +249,9 @@ func (m *selectModel) render() []string {
 			if m.registry != "" {
 				target = m.registry + "/" + target
 			}
+			if m.editing && i == m.cursor {
+				target = m.editBuf + "▏"
+			}
 			body := progress.NormalizeDisplayImage(image.Spec.Image) + " → " + target
 			if image.Spec.Optional {
 				body += " [optional]"
@@ -186,7 +264,11 @@ func (m *selectModel) render() []string {
 		}
 	}
 
-	lines = append(lines, fmt.Sprintf("%d/%d selected", m.selectedCount(), m.itemCount()))
+	if m.editErr != "" {
+		lines = append(lines, "error: "+m.editErr)
+	} else {
+		lines = append(lines, fmt.Sprintf("%d/%d selected", m.selectedCount(), m.itemCount()))
+	}
 
 	return lines
 }
@@ -228,6 +310,7 @@ const (
 	keyToggleAll
 	keyConfirm
 	keyCancel
+	keyEdit
 )
 
 func readKey(r *bufio.Reader) (key, error) {
@@ -243,6 +326,8 @@ func readKey(r *bufio.Reader) (key, error) {
 		return keyToggle, nil
 	case 'a':
 		return keyToggleAll, nil
+	case 'e':
+		return keyEdit, nil
 	case 'q':
 		return keyCancel, nil
 	case 0x03:
@@ -357,7 +442,7 @@ func colorizeRenderLines(lines []string, model *selectModel) []string {
 	return styled
 }
 
-func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *classifiedChart, registry string) (selected pushSelection, cancelled bool, err error) {
+func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *classifiedChart, registry string, reclassify func(pushspec.ArchiveSpec) classifiedImage) (selected pushSelection, cancelled bool, err error) {
 	itemCount := len(images)
 	sectionCount := 0
 	if chart != nil {
@@ -424,6 +509,20 @@ func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *cla
 		}
 		lastLines = len(lines)
 
+		if model.editing {
+			b, err := br.ReadByte()
+			if err != nil && err != io.EOF {
+				return pushSelection{}, false, err
+			}
+			if err != nil || model.editKey(b, br, reclassify) {
+				if _, err := io.WriteString(out, "\r\n"); err != nil {
+					return pushSelection{}, false, fmt.Errorf("write interactive output: %w", err)
+				}
+				return pushSelection{}, true, nil
+			}
+			continue
+		}
+
 		k, err := readKey(br)
 		if err != nil {
 			if err == io.EOF {
@@ -444,6 +543,8 @@ func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *cla
 			model.toggle()
 		case keyToggleAll:
 			model.toggleAll()
+		case keyEdit:
+			model.startEdit()
 		case keyConfirm:
 			selected := model.selection()
 			if _, err := io.WriteString(out, "\r\n"); err != nil {

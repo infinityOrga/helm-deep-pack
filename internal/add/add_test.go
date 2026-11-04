@@ -244,3 +244,23 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+func TestRunRejectsDuplicateTarget(t *testing.T) {
+	wrote := false
+	r := Runner{
+		readManifest: func(string) (*pushspec.PushManifest, error) {
+			return &pushspec.PushManifest{Images: []pushspec.ArchiveSpec{{Image: "quay.io/x/redis:7", Target: "redis:7"}}}, nil
+		},
+		archiveImages: func(context.Context, []string, string, int, ...io.Writer) ([]pushspec.ArchiveSpec, error) {
+			return []pushspec.ArchiveSpec{{Image: "docker.io/redis:7", Target: "redis:7"}}, nil
+		},
+		writeManifest: func(string, []pushspec.ArchiveSpec) error { wrote = true; return nil },
+	}
+	err := r.Run(context.Background(), Options{Images: []string{"docker.io/redis:7"}})
+	if err == nil || !strings.Contains(err.Error(), "quay.io/x/redis:7") || !strings.Contains(err.Error(), "docker.io/redis:7") {
+		t.Fatalf("err = %v, want both images named", err)
+	}
+	if wrote {
+		t.Fatal("manifest written despite collision")
+	}
+}

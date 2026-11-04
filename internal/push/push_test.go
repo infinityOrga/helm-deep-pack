@@ -981,3 +981,66 @@ func TestConfirmConflictSelection(t *testing.T) {
 		}
 	})
 }
+
+func retargetPushFixture(t *testing.T, writeFn func(string, []pushspec.ArchiveSpec) error) (Engine, string, *[]string, *bytes.Buffer) {
+	t.Helper()
+	probeClient := withRegistryProbeClient(t, func(*http.Request) (*http.Response, error) {
+		return registryProbeResponse(http.StatusOK, "application/json", ""), nil
+	})
+	engine := newPushTestEngine(probeClient)
+	var targets []string
+	engine.copyImageToRegistry = func(_ context.Context, _ string, _ bool, _ layout.Path, _, target, _ string) error {
+		targets = append(targets, target)
+		return nil
+	}
+	engine.loadOCILayout = func(path string) (layout.Path, error) { return layout.Path(path), nil }
+	engine.isInteractive = func(io.Reader, io.Writer) bool { return true }
+	edited := []pushspec.ArchiveSpec{{
+		Image:     "busybox:1.36",
+		Target:    "team/bb:1.36",
+		OCIDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}}
+	engine.selectItemsToPush = func(context.Context, Options, string, []pushspec.ArchiveSpec, *chartBundle) (pushSelection, bool, error) {
+		return pushSelection{Images: edited, Retargeted: edited}, true, nil
+	}
+	if writeFn != nil {
+		engine.writePushManifest = writeFn
+	}
+	dir := t.TempDir()
+	writePushManifestFixture(t, dir, []pushspec.ArchiveSpec{{
+		Image:     "busybox:1.36",
+		Target:    "library/busybox:1.36",
+		OCIDigest: edited[0].OCIDigest,
+	}})
+	return engine, dir, &targets, &bytes.Buffer{}
+}
+
+func TestPushImagesSavesRetargetedManifestAndPushesNewTarget(t *testing.T) {
+	engine, dir, targets, status := retargetPushFixture(t, nil)
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1}, status); err != nil {
+		t.Fatalf("PushImages() error = %v", err)
+	}
+	manifest, err := pushspec.ReadPushManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Images) != 1 || manifest.Images[0].Target != "team/bb:1.36" {
+		t.Fatalf("manifest images = %+v", manifest.Images)
+	}
+	if len(*targets) != 1 || (*targets)[0] != "team/bb:1.36" {
+		t.Fatalf("pushed targets = %v", *targets)
+	}
+}
+
+func TestPushImagesWarnsWhenRetargetedManifestWriteFails(t *testing.T) {
+	engine, dir, targets, status := retargetPushFixture(t, func(string, []pushspec.ArchiveSpec) error { return errors.New("disk full") })
+	if err := pushImagesWithEngineForTest(t, engine, Options{Registry: "registry.local:5000", InputDir: dir, Concurrency: 1}, status); err != nil {
+		t.Fatalf("PushImages() error = %v", err)
+	}
+	if !strings.Contains(status.String(), "warning: could not save retargeted images to push_images.json: disk full") {
+		t.Fatalf("status = %q", status.String())
+	}
+	if len(*targets) != 1 || (*targets)[0] != "team/bb:1.36" {
+		t.Fatalf("pushed targets = %v", *targets)
+	}
+}

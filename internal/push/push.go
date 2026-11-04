@@ -125,6 +125,13 @@ func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.
 			return nil
 		}
 		selection = chosen
+		if selection.Retargeted != nil {
+			if err := e.writePushManifest(resolvedInputDir, selection.Retargeted); err != nil {
+				if _, werr := fmt.Fprintf(progress.StatusWriter(status...), "warning: could not save retargeted images to push_images.json: %v\n", err); werr != nil {
+					return fmt.Errorf("write warning output: %w", werr)
+				}
+			}
+		}
 	}
 
 	if err := e.pushSpecs(ctx, destRegistry, layoutPath, selection.Images, opts.Concurrency, opts.AllowInsecureHTTP, status...); err != nil {
@@ -141,6 +148,8 @@ func (e Engine) pushImages(ctx context.Context, opts Options, probeClient *http.
 type pushSelection struct {
 	Images []pushspec.ArchiveSpec
 	Chart  bool
+	// Retargeted holds every image spec with its edited target; nil when no target changed.
+	Retargeted []pushspec.ArchiveSpec
 }
 
 // selectItemsToPush runs the interactive chooser and image conflict confirmation.
@@ -166,7 +175,9 @@ func selectItemsToPush(ctx context.Context, opts Options, destRegistry string, s
 		}
 	}
 
-	selected, cancelled, err := runSelect(opts.In, opts.Out, classified, classifiedChartItem, destRegistry)
+	selected, cancelled, err := runSelect(opts.In, opts.Out, classified, classifiedChartItem, destRegistry, func(spec pushspec.ArchiveSpec) classifiedImage {
+		return classifyOne(ctx, destRegistry, opts.AllowInsecureHTTP, spec, remote.Head)
+	})
 	if err != nil {
 		return pushSelection{}, false, fmt.Errorf("select push items: %w", err)
 	}

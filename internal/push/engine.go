@@ -34,6 +34,7 @@ type Engine struct {
 	isInteractive       func(in io.Reader, out io.Writer) bool
 	promptForRegistry   func(in io.Reader, out io.Writer) (string, error)
 	confirmInsecureHTTP func(in io.Reader, out io.Writer, registry string) (bool, error)
+	writePushManifest   func(dir string, specs []pushspec.ArchiveSpec) error
 	selectItemsToPush   func(ctx context.Context, opts Options, registry string, specs []pushspec.ArchiveSpec, chart *chartBundle) (pushSelection, bool, error)
 }
 
@@ -56,6 +57,7 @@ func NewEngine() Engine {
 		isInteractive:       defaultIsInteractive,
 		promptForRegistry:   readRegistryLoop,
 		confirmInsecureHTTP: confirmInsecureHTTP,
+		writePushManifest:   pushspec.WritePushManifest,
 		selectItemsToPush:   selectItemsToPush,
 	}
 	return e

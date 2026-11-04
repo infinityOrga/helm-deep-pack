@@ -76,6 +76,9 @@ func (r Runner) Run(ctx context.Context, opts Options, status ...io.Writer) erro
 	}
 
 	mergedSpecs := append(manifest.Images, newSpecs...)
+	if a, b, found := pushspec.DuplicateTarget(mergedSpecs); found {
+		return fmt.Errorf("target path %q of %s collides with %s; retarget one of them", a.Target, b.Image, a.Image)
+	}
 	if err := r.writeManifest(outputDir, mergedSpecs); err != nil {
 		return fmt.Errorf("write updated push manifest: %w", err)
 	}

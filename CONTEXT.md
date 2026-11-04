@@ -29,7 +29,11 @@ drifting to synonyms.
   An image may also carry an `optional` marker and best-effort `optionalFlags`
   Helm value paths; older manifests omit these fields and remain readable.
 - **Target path** — The image destination stored in `ArchiveSpec.Target`. It is
-  derived from the source image when staged and used by `push` as written.
+  derived from the source image when staged and used by `push` as written,
+  unless an operator retargets it. Target paths are unique within a bundle.
+- **Retarget** — An operator changes an image's target path during the push
+  phase. Only the repository path changes; the tag or digest is fixed. The change
+  is saved in the bundle so later pushes reuse it.
 - **Optional image** — An image absent from the normal render, including an
   annotation-only image or an image found only by the synthetic inventory render.
   Required status wins when the same image appears in both inventories.
