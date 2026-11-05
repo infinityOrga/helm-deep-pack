@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -23,6 +24,7 @@ type selectModel struct {
 	chartChecked bool
 	top          int
 	height       int
+	width        int
 
 	editing     bool
 	editBuf     string
@@ -73,18 +75,50 @@ func (m *selectModel) moveUp() {
 	if m.cursor > 0 {
 		m.cursor--
 	}
-	if m.cursor < m.top {
-		m.top = m.cursor
-	}
+	m.ensureVisible()
 }
 
 func (m *selectModel) moveDown() {
 	if m.cursor < m.itemCount()-1 {
 		m.cursor++
 	}
-	if m.cursor >= m.top+m.height {
-		m.top = m.cursor - m.height + 1
+	m.ensureVisible()
+}
+
+func (m *selectModel) rowHeight(item int) int {
+	return len(wrapText(m.itemBlock(item).text, m.width, "    "))
+}
+
+func (m *selectModel) linesBetween(from, to int) int {
+	total := 0
+	for i := from; i <= to; i++ {
+		total += m.rowHeight(i)
 	}
+	return total
+}
+
+// ensureVisible scrolls so the whole cursor row fits in the item budget.
+func (m *selectModel) ensureVisible() {
+	if m.cursor < m.top {
+		m.top = m.cursor
+	}
+	for m.top < m.cursor && m.linesBetween(m.top, m.cursor) > m.height {
+		m.top++
+	}
+}
+
+// visibleEnd returns the exclusive end of the items shown from top.
+func (m *selectModel) visibleEnd() int {
+	end, used := m.top, 0
+	for end < m.itemCount() {
+		h := m.rowHeight(end)
+		if end > m.top && used+h > m.height {
+			break
+		}
+		used += h
+		end++
+	}
+	return end
 }
 
 func (m *selectModel) toggle() {
@@ -150,75 +184,197 @@ func (m *selectModel) selectedCount() int {
 	return count
 }
 
-func (m *selectModel) render() []string {
-	lines := make([]string, 0)
+type block struct {
+	text   string
+	style  string
+	indent bool
+}
 
-	if m.editing {
-		lines = append(lines, "Edit target path (←/→ move · home/end · enter save · esc discard)")
-	} else {
-		lines = append(lines, "Select items to push (↑/↓ move · space toggle · a all · e retarget · enter confirm · esc cancel)")
+func (m *selectModel) itemBlock(i int) block {
+	prefix := "  "
+	if i == m.cursor {
+		prefix = "❯ "
 	}
-
-	end := min(m.top+m.height, m.itemCount())
-	if m.chart != nil && m.top == 0 && end > 0 {
-		lines = append(lines, "Helm chart")
-		prefix := "  "
-		if m.onChart() {
-			prefix = "❯ "
-		}
+	if m.chart != nil && i == 0 {
 		checkbox := "◯ "
+		style := ""
 		if m.chartChecked {
 			checkbox = "◉ "
+			style = termstyle.Bold
 		}
 		chart := m.chart.Bundle
-		label, _ := statusDisplay(m.chart.Status)
+		label, color := statusDisplay(m.chart.Status)
 		target := m.withRegistry(m.chartRef(chart.targetPath()))
 		if m.editing && m.onChart() {
 			target = m.withRegistry(m.editView() + ":" + chart.tag)
 		}
-		lines = append(lines, prefix+checkbox+chart.name+":"+chart.version+" → "+target+"  "+label)
+		return block{prefix + checkbox + chart.name + ":" + chart.version + " → " + target + "  " + label, style + color, true}
 	}
+	imageIndex := m.imageIndex(i)
+	image := m.images[imageIndex]
+	checkbox := "◯ "
+	style := ""
+	if m.checked[imageIndex] {
+		checkbox = "◉ "
+		style = termstyle.Bold
+	}
+	target := m.withRegistry(image.Spec.Target)
+	if m.editing && i == m.cursor {
+		target = m.withRegistry(m.editView() + strings.TrimPrefix(image.Spec.Target, pushspec.TargetRepository(image.Spec.Target)))
+	}
+	body := progress.NormalizeDisplayImage(image.Spec.Image) + " → " + target
+	if image.Spec.Optional {
+		body += " [optional]"
+	}
+	label, color := statusDisplay(image.Status)
+	return block{prefix + checkbox + body + "  " + label, style + color, true}
+}
 
+func (m *selectModel) blocks() []block {
+	heading := termstyle.Bold + termstyle.Cyan
+	header := "Select items to push (↑/↓ move · space toggle · a all · e retarget · enter confirm · esc cancel)"
+	if m.editing {
+		header = "Edit target path (←/→ move · home/end · enter save · esc discard)"
+	}
+	blocks := []block{{text: header, style: heading}}
+
+	end := m.visibleEnd()
+	if m.chart != nil && m.top == 0 && end > 0 {
+		blocks = append(blocks, block{text: "Helm chart", style: heading}, m.itemBlock(0))
+	}
 	imageStart := m.top
 	if m.chart != nil && imageStart < 1 {
 		imageStart = 1
 	}
 	if imageStart < end {
-		lines = append(lines, "Images")
+		blocks = append(blocks, block{text: "Images", style: heading})
 		for i := imageStart; i < end; i++ {
-			imageIndex := m.imageIndex(i)
-			image := m.images[imageIndex]
-			prefix := "  "
-			if i == m.cursor {
-				prefix = "❯ "
-			}
-			checkbox := "◯ "
-			if m.checked[imageIndex] {
-				checkbox = "◉ "
-			}
-			target := m.withRegistry(image.Spec.Target)
-			if m.editing && i == m.cursor {
-				target = m.withRegistry(m.editView() + strings.TrimPrefix(image.Spec.Target, pushspec.TargetRepository(image.Spec.Target)))
-			}
-			body := progress.NormalizeDisplayImage(image.Spec.Image) + " → " + target
-			if image.Spec.Optional {
-				body += " [optional]"
-				if len(image.Spec.OptionalFlags) > 0 {
-					body += ": " + strings.Join(image.Spec.OptionalFlags, ", ")
-				}
-			}
-			label, _ := statusDisplay(image.Status)
-			lines = append(lines, prefix+checkbox+body+"  "+label)
+			blocks = append(blocks, m.itemBlock(i))
 		}
 	}
 
-	if m.editErr != "" {
-		lines = append(lines, "error: "+m.editErr)
-	} else {
-		lines = append(lines, fmt.Sprintf("%d/%d selected", m.selectedCount(), m.itemCount()))
+	if detail := m.detailLine(); detail != "" {
+		blocks = append(blocks, block{text: detail, style: termstyle.Dim})
 	}
+	if m.editErr != "" {
+		blocks = append(blocks, block{text: "error: " + m.editErr, style: termstyle.Dim})
+	} else {
+		style := termstyle.Dim
+		if m.selectedCount() > 0 {
+			style = heading
+		}
+		blocks = append(blocks, block{text: fmt.Sprintf("%d/%d selected", m.selectedCount(), m.itemCount()), style: style})
+	}
+	return blocks
+}
 
+func (m *selectModel) detailLine() string {
+	if m.itemCount() == 0 || m.onChart() {
+		return ""
+	}
+	spec := m.images[m.imageIndex(m.cursor)].Spec
+	if !spec.Optional || len(spec.OptionalFlags) == 0 {
+		return ""
+	}
+	return "optional; enabled by: " + strings.Join(spec.OptionalFlags, ", ")
+}
+
+func (m *selectModel) layout(color bool) []string {
+	var lines []string
+	for _, b := range m.blocks() {
+		indent := ""
+		if b.indent {
+			indent = "    "
+		}
+		for _, line := range wrapText(b.text, m.width, indent) {
+			if color && b.style != "" {
+				line = b.style + line + termstyle.Reset
+			}
+			lines = append(lines, line)
+		}
+	}
 	return lines
+}
+
+func (m *selectModel) render() []string { return m.layout(false) }
+
+// wrapText wraps s at spaces to width-1 runes; width <= 0 disables wrapping.
+// Over-long tokens break after '/', ',' or '-', then hard-break. Continuation
+// lines are prefixed with indent.
+func wrapText(s string, width int, indent string) []string {
+	if width <= 0 || utf8.RuneCountInString(s) < width {
+		return []string{s}
+	}
+	limit := width - 1
+	contLimit := max(limit-utf8.RuneCountInString(indent), 1)
+	type piece struct {
+		text string
+		sep  bool
+	}
+	var pieces []piece
+	for _, word := range strings.Split(s, " ") {
+		if utf8.RuneCountInString(word) <= contLimit {
+			pieces = append(pieces, piece{word, true})
+			continue
+		}
+		sep := true
+		start := 0
+		runes := []rune(word)
+		for i, r := range runes {
+			if r == '/' || r == ',' || r == '-' || i == len(runes)-1 {
+				pieces = append(pieces, piece{string(runes[start : i+1]), sep})
+				sep, start = false, i+1
+			}
+		}
+	}
+	var lines []string
+	cur, curW, has := "", 0, false
+	flush := func() {
+		lines = append(lines, strings.TrimRight(cur, " "))
+		cur, curW, has = indent, utf8.RuneCountInString(indent), false
+	}
+	for _, p := range pieces {
+		lim := limit
+		for _, chunk := range hardSplit(p.text, contLimit) {
+			w := utf8.RuneCountInString(chunk)
+			add := w
+			if has && p.sep {
+				add++
+			}
+			if has && curW+add > lim {
+				flush()
+				if chunk == "" {
+					continue
+				}
+				add = w
+			}
+			if has && p.sep {
+				cur += " "
+			}
+			cur += chunk
+			curW += add
+			has = true
+			p.sep = false
+		}
+	}
+	if has || len(lines) == 0 {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// hardSplit cuts s into chunks of at most n runes.
+func hardSplit(s string, n int) []string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return []string{s}
+	}
+	var chunks []string
+	for len(runes) > n {
+		chunks = append(chunks, string(runes[:n]))
+		runes = runes[n:]
+	}
+	return append(chunks, string(runes))
 }
 
 func (m *selectModel) withRegistry(ref string) string {
@@ -315,80 +471,22 @@ func readKey(r *bufio.Reader) (key, error) {
 	}
 }
 
-func viewportHeight(out io.Writer, count, sectionCount int) int {
-	if !terminal.IsWriter(out) {
-		return count
+// fitViewport sets the item budget from the terminal height, reserving the
+// header, section headings, footer and detail line.
+func (m *selectModel) fitViewport(termHeight, sectionCount int) {
+	reserved := 1 + sectionCount + 1 + 1
+	reserved += max(len(wrapText("Select items to push (↑/↓ move · space toggle · a all · e retarget · enter confirm · esc cancel)", m.width, ""))-1, 0)
+	if m.editErr != "" {
+		reserved += len(wrapText("error: "+m.editErr, m.width, "")) - 1
 	}
-	_, height := terminal.Size(out)
-	if height < 3+sectionCount {
-		return count
-	}
-	viewport := height - 3 - sectionCount
-	if viewport < 1 {
-		viewport = 1
-	}
-	if viewport > count {
-		viewport = count
-	}
-	return viewport
-}
-
-func fitRenderLines(lines []string, width int) []string {
-	if width <= 0 {
-		return lines
-	}
-	fitted := make([]string, len(lines))
-	for i, line := range lines {
-		fitted[i] = terminal.Truncate(line, width-1)
-	}
-	return fitted
-}
-
-func colorizeRenderLines(lines []string, model *selectModel) []string {
-	if len(lines) == 0 || model == nil {
-		return lines
-	}
-
-	styled := append([]string(nil), lines...)
-	styled[0] = termstyle.Bold + termstyle.Cyan + styled[0] + termstyle.Reset
-
-	end := min(model.top+model.height, model.itemCount())
-	lineIdx := 1
-	if model.chart != nil && model.top == 0 && end > 0 {
-		styled[lineIdx] = termstyle.Bold + termstyle.Cyan + styled[lineIdx] + termstyle.Reset
-		lineIdx++
-		_, prefix := statusDisplay(model.chart.Status)
-		if model.chartChecked {
-			prefix = termstyle.Bold + prefix
-		}
-		styled[lineIdx] = prefix + styled[lineIdx] + termstyle.Reset
-		lineIdx++
-	}
-
-	imageStart := model.top
-	if model.chart != nil && imageStart < 1 {
-		imageStart = 1
-	}
-	if imageStart < end {
-		styled[lineIdx] = termstyle.Bold + termstyle.Cyan + styled[lineIdx] + termstyle.Reset
-		lineIdx++
-		for item := imageStart; item < end && lineIdx < len(styled)-1; item++ {
-			imageIndex := model.imageIndex(item)
-			_, prefix := statusDisplay(model.images[imageIndex].Status)
-			if model.checked[imageIndex] {
-				prefix = termstyle.Bold + prefix
-			}
-			styled[lineIdx] = prefix + styled[lineIdx] + termstyle.Reset
-			lineIdx++
+	detail := 0
+	for _, image := range m.images {
+		if len(image.Spec.OptionalFlags) > 0 {
+			flags := "optional; enabled by: " + strings.Join(image.Spec.OptionalFlags, ", ")
+			detail = max(detail, len(wrapText(flags, m.width, "")))
 		}
 	}
-
-	footerColor := termstyle.Dim
-	if model.selectedCount() > 0 {
-		footerColor = termstyle.Bold + termstyle.Cyan
-	}
-	styled[len(styled)-1] = footerColor + styled[len(styled)-1] + termstyle.Reset
-	return styled
+	m.height = max(termHeight-reserved-detail, 1)
 }
 
 func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *classifiedChart, registry string, reclassify func(pushspec.ArchiveSpec) classifiedImage, reclassifyChart func(*chartBundle) classifiedChart) (selected pushSelection, cancelled bool, err error) {
@@ -405,8 +503,7 @@ func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *cla
 		return pushSelection{}, false, nil
 	}
 
-	height := viewportHeight(out, itemCount, sectionCount)
-	model := newSelectModel(images, chart, height, registry)
+	model := newSelectModel(images, chart, itemCount, registry)
 
 	var state *term.State
 	var inputFD int
@@ -436,11 +533,13 @@ func runSelect(in io.Reader, out io.Writer, images []classifiedImage, chart *cla
 	colorOutput := terminal.IsWriter(out)
 
 	for {
-		width, _ := terminal.Size(out)
-		lines := fitRenderLines(model.render(), width)
+		width, termHeight := terminal.Size(out)
+		model.width = width
 		if colorOutput {
-			lines = colorizeRenderLines(lines, model)
+			model.fitViewport(termHeight, sectionCount)
 		}
+		model.ensureVisible()
+		lines := model.layout(colorOutput)
 		if lastLines > 0 {
 			if err := terminal.ClearBlock(out, lastLines); err != nil {
 				return pushSelection{}, false, fmt.Errorf("clear interactive output: %w", err)

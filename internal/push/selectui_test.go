@@ -3,10 +3,12 @@ package push
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"helm-deep-pack/internal/pushspec"
 	"helm-deep-pack/internal/termstyle"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func newClassifiedImageForTest(spec pushspec.ArchiveSpec, status targetStatus) classifiedImage {
@@ -266,8 +268,11 @@ func TestSelectModelRenderMarksOptionalImagesAndLeavesThemUnchecked(t *testing.T
 	if model.selectedCount() != 0 {
 		t.Fatalf("optional image was selected by default: %v", model.selectedSpecs())
 	}
-	if !strings.Contains(lines[2], "[optional]") || !strings.Contains(lines[2], ".Values.metrics.enabled") {
-		t.Fatalf("optional row = %q, want optional marker and flag path", lines[2])
+	if !strings.Contains(lines[2], "[optional]") || strings.Contains(lines[2], ".Values.metrics.enabled") {
+		t.Fatalf("optional row = %q, want optional marker without flags", lines[2])
+	}
+	if got := lines[len(lines)-2]; got != "optional; enabled by: .Values.metrics.enabled" {
+		t.Fatalf("detail line = %q", got)
 	}
 	if !strings.Contains(lines[2], "◯ ") {
 		t.Fatalf("optional row = %q, want unchecked row", lines[2])
@@ -379,26 +384,89 @@ func TestSelectModelRenderScrolling(t *testing.T) {
 	}
 }
 
-func TestFitRenderLines(t *testing.T) {
-	lines := []string{
-		"short",
-		"this line is definitely too long",
-	}
+func wrapFixture() *selectModel {
+	return newSelectModel([]classifiedImage{
+		newClassifiedImageForTest(pushspec.ArchiveSpec{
+			Image:         "quay.io/argoproj/kubectl-argo-rollouts:v1.10.2",
+			Target:        "alex-test/argoproj/kubectl-argo-rollouts:v1.10.2",
+			Optional:      true,
+			OptionalFlags: []string{".Values.dashboard.enabled"},
+		}, statusNewRepository),
+		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "b", Target: "b"}, statusNewRepository),
+	}, nil, 10, "localhost:5000")
+}
 
-	fitted := fitRenderLines(lines, 10)
-	if len(fitted) != len(lines) {
-		t.Fatalf("fitRenderLines() len = %d, want %d", len(fitted), len(lines))
+func TestDetailLineOnlyUnderCursor(t *testing.T) {
+	model := wrapFixture()
+	if !strings.Contains(strings.Join(model.render(), "\n"), "enabled by:") {
+		t.Fatal("detail missing with cursor on optional row")
 	}
-	if fitted[0] != "short" {
-		t.Fatalf("fitRenderLines() first line = %q, want %q", fitted[0], "short")
+	model.moveDown()
+	if strings.Contains(strings.Join(model.render(), "\n"), "enabled by:") {
+		t.Fatal("detail shown for non-optional cursor row")
 	}
-	if len(fitted[1]) > 9 {
-		t.Fatalf("fitRenderLines() second line length = %d, want <= 9", len(fitted[1]))
-	}
+}
 
-	unbounded := fitRenderLines(lines, 0)
-	if unbounded[1] != lines[1] {
-		t.Fatalf("fitRenderLines() width 0 altered line: got %q want %q", unbounded[1], lines[1])
+func TestRenderWrapsToWidth(t *testing.T) {
+	model := wrapFixture()
+	model.width = 60
+	lines := model.render()
+	rendered := strings.Join(lines, "\n")
+	for _, line := range lines {
+		if n := utf8.RuneCountInString(line); n > 59 {
+			t.Fatalf("line %q has %d runes", line, n)
+		}
+	}
+	if !strings.Contains(strings.ReplaceAll(rendered, "\n    ", ""), "  [new repository]") {
+		t.Fatalf("status label missing or split:\n%s", rendered)
+	}
+	if !strings.HasPrefix(lines[3], "❯ ◯ quay.io") || !strings.HasPrefix(lines[4], "    ") {
+		t.Fatalf("bad wrap:\n%s", rendered)
+	}
+	t.Log("\n" + rendered)
+}
+
+func TestRenderWidthZeroDoesNotWrap(t *testing.T) {
+	model := wrapFixture()
+	if got := len(model.render()); got != 6 {
+		t.Fatalf("render() = %d lines, want 6", got)
+	}
+}
+
+func TestWrapTextBreaksLongTokens(t *testing.T) {
+	for _, line := range wrapText("aaaa/bbbb/cccc-dddd,eeee xxxxxxxxxxxxxxxxxxxx", 12, "") {
+		if utf8.RuneCountInString(line) > 11 {
+			t.Fatalf("line %q too long", line)
+		}
+	}
+}
+
+func TestScrollWithWrappedRows(t *testing.T) {
+	var items []classifiedImage
+	for i := 0; i < 4; i++ {
+		items = append(items, newClassifiedImageForTest(pushspec.ArchiveSpec{
+			Image:  fmt.Sprintf("registry.example.com/team/app%d:v1.2.3", i),
+			Target: fmt.Sprintf("team/app%d:v1.2.3", i),
+		}, statusNewRepository))
+	}
+	model := newSelectModel(items, nil, 5, "localhost:5000")
+	model.width = 40
+	h := model.rowHeight(0)
+	if h < 2 {
+		t.Fatalf("row height = %d, want wrapped", h)
+	}
+	for i := 0; i < 3; i++ {
+		model.moveDown()
+		if got := model.linesBetween(model.top, model.cursor); got > model.height {
+			t.Fatalf("cursor row not fully visible: %d > %d", got, model.height)
+		}
+	}
+	if model.top == 0 {
+		t.Fatal("list did not scroll")
+	}
+	rendered := strings.Join(model.render(), "\n")
+	if !strings.Contains(rendered, "app3") || strings.Contains(rendered, "app0") {
+		t.Fatalf("unexpected viewport:\n%s", rendered)
 	}
 }
 
@@ -409,8 +477,7 @@ func TestColorizeRenderLines(t *testing.T) {
 	}, nil, 10, "")
 	model.checked[0] = true
 
-	lines := model.render()
-	styled := colorizeRenderLines(lines, model)
+	styled := model.layout(true)
 
 	if !strings.Contains(styled[0], termstyle.Cyan) {
 		t.Fatalf("header not colorized: %q", styled[0])
@@ -620,5 +687,22 @@ func TestRunSelectEditRendersCursorInsidePath(t *testing.T) {
 	_, _, out := runSelectScript(t, "e"+strings.Repeat("\x1b[D", 7)+"\x1b\x1b", retargetFixture(), nil)
 	if !strings.Contains(out, "library/▏busybox:1.36") {
 		t.Fatalf("output missing mid-path cursor: %q", out)
+	}
+}
+
+func TestColorizeWrappedRowEveryLine(t *testing.T) {
+	model := wrapFixture()
+	model.width = 40
+	count := 0
+	for _, line := range model.layout(true) {
+		if strings.Contains(line, "kubectl") || strings.Contains(line, "repository]") {
+			count++
+			if !strings.HasPrefix(line, termstyle.Yellow) || !strings.HasSuffix(line, termstyle.Reset) {
+				t.Fatalf("line not styled: %q", line)
+			}
+		}
+	}
+	if count < 2 {
+		t.Fatalf("row did not wrap, styled lines = %d", count)
 	}
 }

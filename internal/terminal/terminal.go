@@ -3,6 +3,7 @@ package terminal
 import (
 	"io"
 	"os"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -48,15 +49,15 @@ func Size(w io.Writer) (int, int) {
 	return width, height
 }
 
-// Truncate shortens line to width bytes when width is positive.
+// Truncate shortens line to width runes when width is positive.
 func Truncate(line string, width int) string {
 	if width <= 0 {
 		return line
 	}
-	if len(line) <= width {
+	if utf8.RuneCountInString(line) <= width {
 		return line
 	}
-	return line[:width]
+	return string([]rune(line)[:width])
 }
 
 // ClearBlock clears an N-line terminal block in-place.
