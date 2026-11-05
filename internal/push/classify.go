@@ -103,11 +103,21 @@ func classifyTarget(ctx context.Context, registry, target string, allowInsecureH
 // probeTarget HEADs the manifest. Registries (e.g. distribution/registry) answer a
 // missing tag with 404 even when the repository does not exist, so on 404 the
 // repository's tag list decides between a new tag and a new repository.
+// Never request push scope here: Quay creates the repository when granting it.
 func probeTarget(ref name.Reference, opts ...remote.Option) (*v1.Descriptor, error) {
 	desc, err := remote.Head(ref, opts...)
 	var transportErr *transport.Error
-	if err == nil || !errors.As(err, &transportErr) || transportErr.StatusCode != http.StatusNotFound {
+	if err == nil || !errors.As(err, &transportErr) {
 		return desc, err
+	}
+	switch transportErr.StatusCode {
+	case http.StatusNotFound:
+	case http.StatusUnauthorized:
+		// ponytail: Quay answers 401 when a pull token cannot cover a repository that does
+		// not exist yet; the same 401 for an unreadable repository surfaces at push time.
+		return nil, errNewRepository
+	default:
+		return nil, err
 	}
 	_, listErr := remote.List(ref.Context(), opts...)
 	switch {

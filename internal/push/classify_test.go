@@ -316,6 +316,10 @@ func distributionLikeRegistry(t *testing.T, digest string) string {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = io.WriteString(w, `{"errors":[{"code":"DENIED"}]}`)
 			return
+		case "/v2/robot/app/manifests/1":
+			// Quay: a pull token cannot cover a repository that does not exist yet.
+			w.WriteHeader(http.StatusUnauthorized)
+			return
 		case "/v2/broken/app/manifests/1":
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -345,6 +349,7 @@ func TestProbeTargetAgainstDistributionLikeRegistry(t *testing.T) {
 		"team/app:2":      statusNewTag,
 		"team/app:1":      statusTagExists,
 		"locked/app:1":    statusMissing,
+		"robot/app:1":     statusNewRepository,
 		"broken/app:1":    statusUnknown,
 	} {
 		got := classifyTarget(context.Background(), host, target, true, "", probe)
