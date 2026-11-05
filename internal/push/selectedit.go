@@ -13,10 +13,54 @@ func (m *selectModel) startEdit() {
 	}
 	if m.onChart() {
 		m.editing, m.editBuf, m.editErr = true, m.chart.Bundle.targetPath(), ""
+	} else {
+		target := pushspec.TargetRepository(m.images[m.imageIndex(m.cursor)].Spec.Target)
+		m.editing, m.editBuf, m.editErr = true, target, ""
+	}
+	m.editPos = len(m.editBuf)
+}
+
+// editView renders the buffer with the cursor marker at the edit position.
+func (m *selectModel) editView() string {
+	return m.editBuf[:m.editPos] + "▏" + m.editBuf[m.editPos:]
+}
+
+func (m *selectModel) moveEditCursor(delta int) {
+	if delta < 0 && m.editPos > 0 {
+		_, size := utf8.DecodeLastRuneInString(m.editBuf[:m.editPos])
+		m.editPos -= size
+	} else if delta > 0 && m.editPos < len(m.editBuf) {
+		_, size := utf8.DecodeRuneInString(m.editBuf[m.editPos:])
+		m.editPos += size
+	}
+}
+
+// editEscape handles a CSI/SS3 sequence (arrows, Home/End, Delete) after ESC.
+func (m *selectModel) editEscape(r *bufio.Reader) {
+	if next, _ := r.ReadByte(); next != '[' && next != 'O' {
 		return
 	}
-	target := pushspec.TargetRepository(m.images[m.imageIndex(m.cursor)].Spec.Target)
-	m.editing, m.editBuf, m.editErr = true, target, ""
+	final, _ := r.ReadByte()
+	param := byte(0)
+	if final >= '0' && final <= '9' {
+		param = final
+		for final != '~' && r.Buffered() > 0 {
+			final, _ = r.ReadByte()
+		}
+	}
+	switch {
+	case final == 'D':
+		m.moveEditCursor(-1)
+	case final == 'C':
+		m.moveEditCursor(1)
+	case final == 'H' || param == '1' || param == '7':
+		m.editPos = 0
+	case final == 'F' || param == '4' || param == '8':
+		m.editPos = len(m.editBuf)
+	case param == '3' && m.editPos < len(m.editBuf):
+		_, size := utf8.DecodeRuneInString(m.editBuf[m.editPos:])
+		m.editBuf = m.editBuf[:m.editPos] + m.editBuf[m.editPos+size:]
+	}
 }
 
 func (m *selectModel) chartRef(path string) string {
@@ -104,17 +148,17 @@ func (m *selectModel) editKey(b byte, r *bufio.Reader, reclassify func(pushspec.
 			m.editing = false
 			return false
 		}
-		if next, _ := r.ReadByte(); next == '[' || next == 'O' {
-			_, _ = r.ReadByte()
-		}
+		m.editEscape(r)
 	case 0x7f, 0x08:
-		if m.editBuf != "" {
-			_, size := utf8.DecodeLastRuneInString(m.editBuf)
-			m.editBuf = m.editBuf[:len(m.editBuf)-size]
+		if m.editPos > 0 {
+			end := m.editPos
+			m.moveEditCursor(-1)
+			m.editBuf = m.editBuf[:m.editPos] + m.editBuf[end:]
 		}
 	default:
 		if b >= 0x20 {
-			m.editBuf += string([]byte{b})
+			m.editBuf = m.editBuf[:m.editPos] + string([]byte{b}) + m.editBuf[m.editPos:]
+			m.editPos++
 		}
 	}
 	return false

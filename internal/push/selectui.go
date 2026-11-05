@@ -26,6 +26,7 @@ type selectModel struct {
 
 	editing     bool
 	editBuf     string
+	editPos     int
 	editErr     string
 	retargeted  bool
 	chartTarget string
@@ -153,7 +154,7 @@ func (m *selectModel) render() []string {
 	lines := make([]string, 0)
 
 	if m.editing {
-		lines = append(lines, "Edit target path (enter save · esc discard)")
+		lines = append(lines, "Edit target path (←/→ move · home/end · enter save · esc discard)")
 	} else {
 		lines = append(lines, "Select items to push (↑/↓ move · space toggle · a all · e retarget · enter confirm · esc cancel)")
 	}
@@ -173,7 +174,7 @@ func (m *selectModel) render() []string {
 		label, _ := statusDisplay(m.chart.Status)
 		target := m.withRegistry(m.chartRef(chart.targetPath()))
 		if m.editing && m.onChart() {
-			target = m.withRegistry(m.editBuf + "▏:" + chart.tag)
+			target = m.withRegistry(m.editView() + ":" + chart.tag)
 		}
 		lines = append(lines, prefix+checkbox+chart.name+":"+chart.version+" → "+target+"  "+label)
 	}
@@ -197,7 +198,7 @@ func (m *selectModel) render() []string {
 			}
 			target := m.withRegistry(image.Spec.Target)
 			if m.editing && i == m.cursor {
-				target = m.withRegistry(m.editBuf + "▏" + strings.TrimPrefix(image.Spec.Target, pushspec.TargetRepository(image.Spec.Target)))
+				target = m.withRegistry(m.editView() + strings.TrimPrefix(image.Spec.Target, pushspec.TargetRepository(image.Spec.Target)))
 			}
 			body := progress.NormalizeDisplayImage(image.Spec.Image) + " → " + target
 			if image.Spec.Optional {

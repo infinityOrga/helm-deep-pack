@@ -508,7 +508,7 @@ func TestRenderEditRowShowsFullTarget(t *testing.T) {
 		newClassifiedImageForTest(pushspec.ArchiveSpec{Image: "nginx", Target: "library/nginx@sha256:abc"}, statusNewTag),
 	}, nil, 10, "reg.io/team")
 	model.startEdit()
-	model.editBuf = "x/bb"
+	model.editBuf, model.editPos = "x/bb", 4
 	if got := model.render()[2]; !strings.Contains(got, "busybox:1.36 → reg.io/team/x/bb▏:1.36") {
 		t.Fatalf("row = %q", got)
 	}
@@ -592,5 +592,33 @@ func TestRunSelectRejectsImageEditCollidingWithChart(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "error: duplicate target demo:1.36") || reclassified || sel.Retargeted != nil {
 		t.Fatalf("sel = %+v, reclassified = %v, out = %q", sel, reclassified, out.String())
+	}
+}
+
+func TestRunSelectEditCursorMovement(t *testing.T) {
+	const left, right, home, end, del = "\x1b[D", "\x1b[C", "\x1b[H", "\x1b[F", "\x1b[3~"
+	tests := []struct {
+		name, keys, want string
+	}{
+		{name: "left then edit mid-path", keys: strings.Repeat(left, 7) + "\x7f-", want: "library-busybox:1.36"},
+		{name: "right clamps at end", keys: strings.Repeat(right, 3) + "x", want: "library/busyboxx:1.36"},
+		{name: "left clamps at start", keys: strings.Repeat(left, 30) + "x/", want: "x/library/busybox:1.36"},
+		{name: "home delete end", keys: home + del + del + end + "2", want: "brary/busybox2:1.36"},
+		{name: "vt home and end", keys: "\x1b[1~" + "a/" + "\x1b[4~" + "z", want: "a/library/busyboxz:1.36"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sel, _, _ := runSelectScript(t, "e"+tt.keys+"\r\r", retargetFixture(), nil)
+			if len(sel.Retargeted) != 2 || sel.Retargeted[0].Target != tt.want {
+				t.Fatalf("Retargeted = %+v, want first target %q", sel.Retargeted, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunSelectEditRendersCursorInsidePath(t *testing.T) {
+	_, _, out := runSelectScript(t, "e"+strings.Repeat("\x1b[D", 7)+"\x1b\x1b", retargetFixture(), nil)
+	if !strings.Contains(out, "library/▏busybox:1.36") {
+		t.Fatalf("output missing mid-path cursor: %q", out)
 	}
 }
